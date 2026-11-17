@@ -1,0 +1,234 @@
+<div class="conversation-supervision" data-testid="conversation-supervision-root" data-mobile-view="summary">
+	<!-- Top Operational Summary & Agent Load -->
+	<section class="cs-top-section" aria-label="{%= __("Operational Summary") %}">
+		<div class="cs-summary-strip" role="region" aria-label="{%= __("Operational Summary") %}">
+			<button type="button" class="cs-metric-card" data-kpi="in_attention" data-tab-jump="active" data-testid="cs-kpi-active">
+				<span class="cs-metric-title">{%= __("In Attention") %}</span>
+				<div class="cs-metric-value-row">
+					<span class="cs-metric-number" data-kpi-val="in_attention">0</span>
+					<span class="cs-metric-badge cs-badge-active">{%= __("Human Active") %}</span>
+				</div>
+			</button>
+			<button type="button" class="cs-metric-card" data-kpi="waiting" data-tab-jump="queued" data-testid="cs-kpi-waiting">
+				<span class="cs-metric-title">{%= __("Waiting") %}</span>
+				<div class="cs-metric-value-row">
+					<span class="cs-metric-number" data-kpi-val="waiting">0</span>
+					<span class="cs-metric-badge cs-badge-queued">{%= __("Human Queued") %}</span>
+				</div>
+			</button>
+			<div class="cs-metric-card cs-metric-static" data-kpi="available_agents" data-testid="cs-kpi-agents">
+				<span class="cs-metric-title">{%= __("Available Agents") %}</span>
+				<div class="cs-metric-value-row">
+					<span class="cs-metric-number" data-kpi-val="available_agents">0</span>
+					<span class="cs-metric-badge cs-badge-agents">{%= __("With capacity") %}</span>
+				</div>
+			</div>
+			<div class="cs-metric-card cs-metric-static" data-kpi="avg_wait" data-testid="cs-kpi-avg-wait">
+				<span class="cs-metric-title">{%= __("Average Wait Time") %}</span>
+				<div class="cs-metric-value-row">
+					<span class="cs-metric-number" data-kpi-val="avg_wait">—</span>
+					<span class="cs-metric-badge cs-badge-neutral">{%= __("In queue") %}</span>
+				</div>
+			</div>
+		</div>
+
+		<div class="cs-agent-strip" data-testid="cs-agent-strip" role="region" aria-label="{%= __("Agent Load") %}">
+			<div class="cs-agent-strip-head">
+				<div class="cs-agent-strip-title-wrap">
+					<span class="cs-agent-strip-title">{%= __("Agent Load") %}</span>
+					<span class="cs-agent-scope-label text-muted small" data-testid="cs-agent-scope-label"></span>
+				</div>
+				<button type="button" class="btn btn-default btn-xs cs-clear-agent-filter hidden" data-testid="cs-clear-agent-filter">
+					{%= __("Show all agents") %}
+				</button>
+			</div>
+			<div class="cs-agent-cards" data-testid="cs-agent-cards">
+				<div class="cs-agent-empty text-muted small">{%= __("Loading agents...") %}</div>
+			</div>
+		</div>
+
+		<div class="cs-mobile-summary-cta">
+			<button type="button" class="btn btn-primary btn-sm btn-block cs-mobile-to-list" data-testid="cs-mobile-to-list">
+				{%= __("View Conversations") %}
+			</button>
+		</div>
+	</section>
+
+	<!-- Three-Pane Operational Supervision Workspace -->
+	<div class="cs-shell">
+		<!-- LEFT PANEL: Conversations List -->
+		<aside class="cs-pane cs-list-pane" data-testid="cs-list-pane" aria-label="{%= __("Conversations") %}">
+			<div class="cs-mobile-list-bar">
+				<button type="button" class="btn btn-default btn-xs cs-mobile-back-summary" data-testid="cs-mobile-back-summary">
+					<span class="cs-back-icon"></span>{%= __("Summary") %}
+				</button>
+				<span class="cs-mobile-bar-title">{%= __("Conversations") %}</span>
+			</div>
+
+			<div class="cs-toolbar">
+				<div class="cs-tabs btn-group w-100" role="tablist" aria-label="{%= __("Conversation status") %}">
+					<button type="button" class="btn btn-default btn-sm cs-tab-btn" role="tab" data-tab="active" data-testid="cs-tab-active">{%= __("In Attention") %}</button>
+					<button type="button" class="btn btn-default btn-sm cs-tab-btn" role="tab" data-tab="queued" data-testid="cs-tab-queued">{%= __("Waiting") %}</button>
+					<button type="button" class="btn btn-default btn-sm cs-tab-btn active" role="tab" data-tab="all" data-testid="cs-tab-all">{%= __("All") %}</button>
+				</div>
+
+				<div class="cs-search-row">
+					<div class="cs-search-box frappe-control" data-fieldtype="Data">
+						<div class="form-group">
+							<div class="control-input-wrapper">
+								<div class="control-input">
+									<div class="input-group cs-search-group">
+										<input
+											type="text"
+											class="input-with-feedback form-control input-xs cs-search-input"
+											data-testid="cs-search-input"
+											placeholder="{%= __("Search by contact, session or agent...") %}"
+											aria-label="{%= __("Search by contact, session or agent...") %}"
+											autocomplete="off"
+										/>
+										<div class="input-group-btn mr-0">
+											<button
+												type="button"
+												class="btn btn-default match-type-dropdown-btn"
+												data-toggle="dropdown"
+												aria-haspopup="true"
+												aria-expanded="false"
+												title="{%= __("Like") %}"
+											>
+												<span class="cs-search-match-icon"></span>
+											</button>
+											<ul class="dropdown-menu match-type-dropdown-menu dropdown-menu-right">
+												<li class="dropdown-item" data-match-type="=">{%= __("Equals") %}</li>
+												<li class="dropdown-item" data-match-type="like">{%= __("Like") %}</li>
+											</ul>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="filter-selector cs-filter-selector">
+						<div class="btn-group cs-filter-dropdown">
+							<button
+								type="button"
+								class="btn btn-default btn-sm filter-button btn-cs-filter"
+								data-testid="cs-filter-toggle"
+								aria-expanded="false"
+								title="{%= __("Filters") %}"
+							>
+								<span class="filter-icon button-icon"></span>
+								<span class="button-label hidden-xs">{%= __("Filters") %}</span>
+							</button>
+							<button
+								type="button"
+								class="btn btn-default btn-sm filter-x-button"
+								data-testid="cs-filter-clear"
+								title="{%= __("Clear all filters") %}"
+							>
+								<span class="filter-icon button-icon"></span>
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="cs-filter-panel hidden" data-testid="cs-filter-panel">
+					<div class="cs-filter-grid">
+						<div class="cs-filter-field">
+							<label class="cs-filter-label" for="cs-filter-channel">{%= __("Channel") %}</label>
+							<select id="cs-filter-channel" class="form-control input-xs cs-filter-control" data-filter="channel" data-testid="cs-filter-channel">
+								<option value="">{%= __("All Channels") %}</option>
+							</select>
+						</div>
+						<div class="cs-filter-field">
+							<label class="cs-filter-label" for="cs-filter-account">{%= __("Account") %}</label>
+							<select id="cs-filter-account" class="form-control input-xs cs-filter-control" data-filter="account" data-testid="cs-filter-account">
+								<option value="">{%= __("All Accounts") %}</option>
+							</select>
+						</div>
+						<div class="cs-filter-field">
+							<label class="cs-filter-label" for="cs-filter-status">{%= __("Status") %}</label>
+							<select id="cs-filter-status" class="form-control input-xs cs-filter-control" data-filter="status" data-testid="cs-filter-status">
+								<option value="">{%= __("All") %}</option>
+								<option value="Human Active">{%= __("Human Active") %}</option>
+								<option value="Human Queued">{%= __("Human Queued") %}</option>
+							</select>
+						</div>
+						<div class="cs-filter-field">
+							<label class="cs-filter-label" for="cs-filter-agent">{%= __("Agent") %}</label>
+							<select id="cs-filter-agent" class="form-control input-xs cs-filter-control" data-filter="agent" data-testid="cs-filter-agent">
+								<option value="">{%= __("All Agents") %}</option>
+							</select>
+						</div>
+						<div class="cs-filter-field">
+							<label class="cs-filter-label" for="cs-filter-availability">{%= __("Agent Availability") %}</label>
+							<select id="cs-filter-availability" class="form-control input-xs cs-filter-control" data-filter="availability" data-testid="cs-filter-availability">
+								<option value="">{%= __("All") %}</option>
+								<option value="available">{%= __("Available") %}</option>
+								<option value="unavailable">{%= __("Unavailable") %}</option>
+								<option value="full">{%= __("Full") %}</option>
+								<option value="disabled">{%= __("Disabled") %}</option>
+							</select>
+						</div>
+						<div class="cs-filter-field">
+							<label class="cs-filter-label" for="cs-filter-order">{%= __("Sort by") %}</label>
+							<select id="cs-filter-order" class="form-control input-xs cs-filter-control" data-filter="order_by" data-testid="cs-filter-order">
+								<option value="last_activity">{%= __("Last Activity") %}</option>
+								<option value="longest_wait">{%= __("Longest Wait") %}</option>
+								<option value="oldest_attention">{%= __("Oldest Attention") %}</option>
+							</select>
+						</div>
+					</div>
+				</div>
+
+				<div class="cs-active-filter-bar hidden" data-testid="cs-active-filter-bar"></div>
+			</div>
+
+			<div class="cs-list-body" data-testid="cs-conversation-list" role="list">
+				<div class="cs-empty-list">{%= __("Loading conversations...") %}</div>
+			</div>
+
+			<div class="cs-pagination hidden" data-testid="cs-pagination">
+				<span class="cs-pagination-info text-muted small" data-testid="cs-pagination-info"></span>
+				<div class="btn-group">
+					<button type="button" class="btn btn-default btn-xs cs-page-prev" data-testid="cs-page-prev">{%= __("Previous") %}</button>
+					<button type="button" class="btn btn-default btn-xs cs-page-next" data-testid="cs-page-next">{%= __("Next") %}</button>
+				</div>
+			</div>
+		</aside>
+
+		<!-- CENTER PANEL: Read-Only Messages & Events Stream -->
+		<main class="cs-pane cs-chat-pane" data-testid="cs-chat-pane" aria-label="{%= __("Conversation") %}">
+			<div class="cs-chat-empty" data-testid="cs-chat-empty">
+				<div class="cs-empty-icon"></div>
+				<div class="cs-empty-title" data-testid="cs-chat-empty-title">{%= __("Select a conversation to supervise") %}</div>
+				<div class="cs-empty-desc" data-testid="cs-chat-empty-desc">{%= __("Choose an active conversation or queued request to review messages, events, and agent load.") %}</div>
+			</div>
+			<div class="cs-chat-active hidden" data-testid="cs-chat-active">
+				<header class="cs-chat-head" data-testid="cs-chat-head"></header>
+				<div class="cs-readonly-banner" data-testid="cs-readonly-banner"></div>
+				<div class="cs-timeline" data-testid="cs-timeline" role="log" aria-live="polite"></div>
+			</div>
+		</main>
+
+		<!-- RIGHT PANEL: Details (Session / Agent / Contact) -->
+		<aside class="cs-pane cs-info-pane" data-testid="cs-info-pane" aria-label="{%= __("Details") %}">
+			<div class="cs-info-header">
+				<div class="cs-info-header-top">
+					<button type="button" class="btn btn-default btn-xs cs-info-back-btn" data-testid="cs-mobile-back-chat">
+						<span class="cs-back-icon"></span>{%= __("Conversation") %}
+					</button>
+					<h5 class="m-0 font-weight-bold">{%= __("Details") %}</h5>
+				</div>
+				<div class="cs-detail-tabs btn-group w-100" role="tablist" aria-label="{%= __("Detail sections") %}">
+					<button type="button" class="btn btn-default btn-xs cs-detail-tab-btn active" role="tab" data-detail-tab="session" data-testid="cs-detail-tab-session">{%= __("Session") %}</button>
+					<button type="button" class="btn btn-default btn-xs cs-detail-tab-btn" role="tab" data-detail-tab="agent" data-testid="cs-detail-tab-agent">{%= __("Agent") %}</button>
+					<button type="button" class="btn btn-default btn-xs cs-detail-tab-btn" role="tab" data-detail-tab="contact" data-testid="cs-detail-tab-contact">{%= __("Contact") %}</button>
+				</div>
+			</div>
+			<div class="cs-info-empty" data-testid="cs-info-empty">
+				<div class="cs-empty-desc">{%= __("Select a conversation to inspect session, agent, and contact details.") %}</div>
+			</div>
+			<div class="cs-info-body hidden" data-testid="cs-info-body"></div>
+		</aside>
+	</div>
+</div>

@@ -1,0 +1,239 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Case Template",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "template_id",
+   "fieldtype": "Data",
+   "label": "Template Id",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "template_name",
+   "fieldtype": "Data",
+   "label": "Template Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "profile_type",
+   "fieldtype": "Select",
+   "label": "Profile Type",
+   "options": "Decision\nParameter Extraction",
+   "read_only": 0,
+   "in_standard_filter": 1,
+   "reqd": 1,
+   "default": "Decision"
+  },
+  {
+   "fieldname": "origin",
+   "fieldtype": "Select",
+   "label": "Origin",
+   "options": "Custom\nRegistered",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "group",
+   "fieldtype": "Data",
+   "label": "Group",
+   "depends_on": "eval:doc.profile_type==='Decision'",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "decision_section",
+   "fieldtype": "Section Break",
+   "label": "Decision Scenario",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  },
+  {
+   "fieldname": "available_flows",
+   "fieldtype": "Table",
+   "label": "Available Flows",
+   "options": "AI Evaluation Flow"
+  },
+  {
+   "fieldname": "context_section",
+   "fieldtype": "Section Break",
+   "label": "Conversational Context",
+   "depends_on": "eval:doc.profile_type==='Decision'",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "previously_recognized_flows",
+   "fieldtype": "Table",
+   "label": "Previously Recognized Flows",
+   "options": "AI Evaluation Reference"
+  },
+  {
+   "fieldname": "extraction_section",
+   "fieldtype": "Section Break",
+   "label": "Extraction Parameters",
+   "depends_on": "eval:doc.profile_type==='Parameter Extraction'"
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "Table",
+   "label": "Parameters",
+   "options": "AI Evaluation Parameter",
+   "description": "Each reference is evaluated once. Native constraints and cardinality apply to every expected value."
+  },
+  {
+   "fieldname": "parameter_count",
+   "fieldtype": "Int",
+   "label": "Parameter Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision_section",
+   "fieldtype": "Section Break",
+   "label": "Ownership and Revisions",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "definition_revision",
+   "fieldtype": "Data",
+   "label": "Definition Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "policy_section",
+   "fieldtype": "Section Break",
+   "label": "Applicability and Coverage",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "mandatory",
+   "fieldtype": "Check",
+   "label": "Mandatory",
+   "default": "0",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "scope",
+   "fieldtype": "Select",
+   "label": "Applicability",
+   "options": "General\nApplication\nProvider",
+   "default": "General",
+   "reqd": 1
+  },
+  {
+   "fieldname": "applicable_application",
+   "fieldtype": "Data",
+   "label": "Applicable Application",
+   "depends_on": "eval:doc.scope==='Application'"
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "label": "AI Provider",
+   "options": "AI Provider",
+   "depends_on": "eval:doc.scope==='Provider'"
+  },
+  {
+   "fieldname": "coverage",
+   "fieldtype": "Table",
+   "label": "Coverage",
+   "options": "AI Evaluation Coverage",
+   "reqd": 1,
+   "description": "Required counts are never reduced to match the available bank. Cases are separate documents."
+  },
+  {
+   "fieldname": "metadata_revision",
+   "fieldtype": "Data",
+   "label": "Metadata Revision",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "cases_revision",
+   "fieldtype": "Data",
+   "label": "Cases Revision",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "greeting_available",
+   "fieldtype": "Check",
+   "label": "Greeting Available",
+   "default": "0",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  },
+  {
+   "fieldname": "human_attention_available",
+   "fieldtype": "Check",
+   "label": "Human Attention Available",
+   "default": "0",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  }
+ ],
+ "field_order": [
+  "template_id",
+  "template_name",
+  "profile_type",
+  "origin",
+  "description",
+  "application",
+  "group",
+  "decision_section",
+  "greeting_available",
+  "human_attention_available",
+  "available_flows",
+  "context_section",
+  "previously_recognized_flows",
+  "extraction_section",
+  "parameters",
+  "parameter_count",
+  "revision_section",
+  "definition_revision",
+  "policy_section",
+  "mandatory",
+  "scope",
+  "applicable_application",
+  "provider",
+  "coverage",
+  "metadata_revision",
+  "cases_revision"
+ ],
+ "istable": 0,
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "select": 1
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "title_field": "template_name",
+ "search_fields": "template_id,template_name,profile_type,application",
+ "sort_field": "template_id",
+ "sort_order": "ASC",
+ "links": [
+  {
+   "link_doctype": "AI Evaluation Case",
+   "link_fieldname": "case_template"
+  }
+ ],
+ "autoname": "field:template_id",
+ "show_title_field_in_link": 1
+}

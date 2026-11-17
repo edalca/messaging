@@ -1,0 +1,64 @@
+name: Candidate tag
+
+on:
+  push:
+    branches:
+      - version-16
+    paths:
+      - messaging/__init__.py
+      - .github/workflows/candidate-tag.yml
+  workflow_dispatch:
+
+concurrency:
+  group: messaging-candidate-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.repository == 'edalca/messaging' && github.ref == 'refs/heads/version-16'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate source version and publish candidate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          if [[ "$commit" != "$GITHUB_SHA" ]]; then
+            printf 'Checked out %s, expected %s\n' "$commit" "$GITHUB_SHA" >&2
+            exit 1
+          fi
+
+          version=$(sed -nE 's/^__version__ = "([^"]+)"$/\1/p' messaging/__init__.py)
+          if [[ ! "$version" =~ ^((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))rc([1-9][0-9]*)$ ]]; then
+            printf 'Expected an X.Y.ZrcN version in messaging/__init__.py\n' >&2
+            exit 1
+          fi
+          tag="v${BASH_REMATCH[1]}-rc.${BASH_REMATCH[5]}"
+          ref="refs/tags/$tag"
+          printf 'Source version %s maps to %s at %s\n' "$version" "$tag" "$commit"
+
+          remote_target() {
+            git ls-remote origin "$ref" "${ref}^{}" |
+              awk -v ref="$ref" '$2 == ref {tag = $1} $2 == ref "^{}" {peeled = $1} END {print (peeled ? peeled : tag)}'
+          }
+
+          target=$(remote_target)
+          if [[ -z "$target" ]]; then
+            if ! git -c push.followTags=false push origin "$commit:$ref"; then
+              printf 'Push failed. Checking whether another run published %s.\n' "$tag" >&2
+            fi
+            target=$(remote_target)
+          fi
+          if [[ "$target" != "$commit" ]]; then
+            printf 'Expected %s at %s, found %s\n' "$tag" "$commit" "${target:-no remote tag}" >&2
+            exit 1
+          fi
+
+          printf 'Verified remote candidate tag %s at %s\n' "$tag" "$commit"
+          printf 'Verified remote candidate tag `%s` at `%s`.\n' "$tag" "$commit" >> "$GITHUB_STEP_SUMMARY"

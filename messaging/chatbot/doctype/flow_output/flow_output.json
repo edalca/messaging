@@ -1,0 +1,130 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-20 19:20:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "status_code",
+  "output_mode",
+  "flow_action",
+  "validation_status",
+  "retry_parameter",
+  "description",
+  "section_break_output_config",
+  "require_non_empty_process_message",
+  "process_message_notes",
+  "output_fields",
+  "section_language_templates",
+  "language_templates_editor"
+ ],
+ "fields": [
+  {
+   "description": "Functional status returned by the Process (e.g. success, not_found, invalid, no_results).",
+   "fieldname": "status_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Functional Status",
+   "reqd": 1,
+   "columns": 2,
+   "read_only": 1
+  },
+  {
+   "default": null,
+   "fieldname": "output_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Output Mode",
+   "options": "\nMessage\nTemplate",
+   "reqd": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "label": "Description",
+   "columns": 2
+  },
+  {
+   "fieldname": "section_break_output_config",
+   "fieldtype": "Section Break",
+   "label": "Output Configuration"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.output_mode=='Message'",
+   "description": "The business Process must return a non-empty message.",
+   "fieldname": "require_non_empty_process_message",
+   "fieldtype": "Check",
+   "label": "Require Non-Empty Message",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.output_mode=='Message'",
+   "description": "Notes on the message structure returned by the provider application in 'message'.",
+   "fieldname": "process_message_notes",
+   "fieldtype": "Small Text",
+   "label": "Process Message Configuration Notes"
+  },
+  {
+   "fieldname": "flow_action",
+   "fieldtype": "Select",
+   "label": "Flow Action",
+   "options": "Complete Flow\nCancel Flow\nRetry Parameter",
+   "default": "Complete Flow",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "read_only": 1
+  },
+  {
+   "fieldname": "retry_parameter",
+   "fieldtype": "Link",
+   "label": "Parameter to Retry",
+   "options": "Bot Parameter",
+   "depends_on": "eval:doc.flow_action=='Retry Parameter'",
+   "mandatory_depends_on": "eval:doc.flow_action=='Retry Parameter'"
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Data",
+   "label": "Validated",
+   "read_only": 1,
+   "is_virtual": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "output_fields",
+   "fieldtype": "Code",
+   "label": "Declared Output Fields",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_language_templates",
+   "fieldtype": "Section Break",
+   "label": "Templates by Language",
+   "depends_on": "eval:doc.output_mode=='Template'"
+  },
+  {
+   "fieldname": "language_templates_editor",
+   "fieldtype": "HTML",
+   "label": "Templates by Language",
+   "depends_on": "eval:doc.output_mode=='Template'"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-20 19:45:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Flow Output",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,270 @@
+<!-- jinja -->
+<div class="conversation-inbox">
+	<!-- Operational Summary Strip -->
+	<div class="inbox-summary-strip" role="region" aria-label="{{ _("Operational Summary") }}">
+		<div class="summary-metric-card" data-filter="">
+			<div class="metric-body">
+				<span class="metric-title">{{ _("To Attend") }}</span>
+				<div class="metric-value-row">
+					<span class="metric-number metric-total">0</span>
+					<span class="metric-badge">{{ _("Total") }}</span>
+				</div>
+			</div>
+		</div>
+		<div class="summary-metric-card" data-filter="Waiting">
+			<div class="metric-body">
+				<span class="metric-title">{{ _("Waiting for Agent") }}</span>
+				<div class="metric-value-row">
+					<span class="metric-number metric-waiting">0</span>
+					<span class="metric-badge badge-queued">{{ _("In Queue") }}</span>
+				</div>
+			</div>
+		</div>
+		<div class="summary-metric-card" data-filter="Pending">
+			<div class="metric-body">
+				<span class="metric-title">{{ _("Pending") }}</span>
+				<div class="metric-value-row">
+					<span class="metric-number metric-pending">0</span>
+					<span class="metric-badge badge-pending">{{ _("Requested") }}</span>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Three-Panel Layout Grid -->
+	<div class="inbox-workspace-grid">
+		<!-- LEFT PANEL: Requests Queue -->
+		<aside class="inbox-column inbox-column-queue" aria-label="{{ _("Requests Queue") }}">
+			<div class="queue-toolbar">
+				<!-- Search & Channel Filter Row (ListView style) -->
+				<div class="queue-search-row">
+					<div class="queue-search-box frappe-control" data-fieldtype="Data">
+						<div class="form-group">
+							<div class="control-input-wrapper">
+								<div class="control-input">
+									<div class="input-group queue-search-group">
+										<input type="text" class="input-with-feedback form-control input-xs queue-search-input" placeholder="{{ _("Search by contact...") }}" autocomplete="off" />
+										<div class="input-group-btn mr-0">
+											<button type="button" class="btn btn-default match-type-dropdown-btn" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" title="{{ _("Like") }}">
+												<span class="queue-search-match-icon"></span>
+											</button>
+											<ul class="dropdown-menu match-type-dropdown-menu dropdown-menu-right">
+												<li class="dropdown-item" data-match-type="=">{{ _("Equals") }}</li>
+												<li class="dropdown-item" data-match-type="like">{{ _("Like") }}</li>
+											</ul>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="filter-selector channel-filter-selector">
+						<div class="btn-group channel-filter-dropdown">
+							<button type="button" class="btn btn-default btn-sm filter-button btn-channel-filter" title="{{ _("Filter by Channel") }}">
+								<span class="filter-icon button-icon"></span>
+								<span class="button-label hidden-xs">{{ _("Filter") }}</span>
+							</button>
+							<button type="button" class="btn btn-default btn-sm filter-x-button" title="{{ _("Clear all filters") }}">
+								<span class="filter-icon button-icon"></span>
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<!-- Operational Status Filter Group (All / Waiting / Pending) -->
+				<div class="queue-status-filter-group btn-group w-100" role="group">
+					<button type="button" class="btn btn-default btn-sm filter-status-btn active" data-status="">{{ _("All") }}</button>
+					<button type="button" class="btn btn-default btn-sm filter-status-btn" data-status="Waiting">{{ _("Waiting") }}</button>
+					<button type="button" class="btn btn-default btn-sm filter-status-btn" data-status="Pending">{{ _("Pending") }}</button>
+				</div>
+
+				<!-- Active Filter Tag (Positioned below All / Waiting / Pending) -->
+				<div class="queue-active-filter-bar hidden">
+					<!-- Populated dynamically with exact Form Tag badge -->
+				</div>
+			</div>
+
+			<!-- Requests Queue Scroll List -->
+			<div class="queue-items-scroll" role="list">
+				<div class="queue-items-list"></div>
+				<div class="queue-loading-placeholder hidden text-center p-4 text-muted">
+					<span class="spinner-border spinner-border-sm text-secondary mr-2" role="status"></span>
+					<span>{{ _("Loading requests...") }}</span>
+				</div>
+				<div class="queue-empty-message hidden">
+					<div class="queue-empty-idle">
+						<div class="queue-empty-icon" aria-hidden="true">
+							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline>
+								<path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>
+							</svg>
+						</div>
+						<p class="queue-empty-title">{{ _("No pending requests") }}</p>
+						<p class="queue-empty-text">{{ _("Requests that require human attention will appear here when they arrive.") }}</p>
+					</div>
+					<p class="queue-empty-filtered hidden">{{ _("No requests were found with the selected filters.") }}</p>
+				</div>
+			</div>
+		</aside>
+
+		<!-- CENTER PANEL: Request Detail & Message Stream (NO COMPOSER / NO REPLY FORM) -->
+		<main class="inbox-column inbox-column-detail" aria-label="{{ _("Request Detail") }}">
+			<!-- Selected Request Header -->
+			<div class="detail-header-bar hidden">
+				<div class="detail-identity-group">
+					<button type="button" class="btn btn-default btn-sm btn-nav-back-mobile hidden mr-2" title="{{ _("Back to list") }}">
+						<i class="fa fa-arrow-left"></i>
+					</button>
+					<div class="detail-title-wrap">
+						<div class="detail-name-row">
+							<h4 class="detail-contact-heading m-0 font-weight-bold"></h4>
+							<span class="detail-status-pill badge ml-2"></span>
+						</div>
+						<div class="detail-channel-account-badge text-muted small mt-1">
+							<span class="channel-indicator-tag"></span>
+							<span class="account-indicator-tag font-weight-medium ml-1"></span>
+						</div>
+					</div>
+				</div>
+				<div class="detail-actions-group">
+					<button type="button" class="btn btn-primary btn-sm btn-take-attention" disabled>
+						<i class="fa fa-user-check mr-1"></i>{{ _("Take Attention") }}
+					</button>
+				</div>
+			</div>
+
+			<!-- Reading and Evaluation Stream Area -->
+			<div class="detail-content-area hidden">
+				<!-- Contextual eligibility / capacity banner -->
+				<div class="detail-attention-banner hidden mb-3"></div>
+
+				<!-- Request Summary Box (human_requests metadata or last message snippet) -->
+				<div class="detail-summary-card mb-3">
+					<div class="summary-card-header">
+						<span class="summary-heading-label">{{ _("Request Summary") }}</span>
+						<span class="summary-time-waiting small text-muted"></span>
+					</div>
+					<div class="summary-card-body"></div>
+				</div>
+
+				<!-- Recent Messages and Event Log -->
+				<div class="detail-messages-wrapper">
+					<div class="detail-earlier-wrapper text-center mb-2">
+						<button type="button" class="btn btn-default btn-xs btn-load-earlier hidden">
+							<i class="fa fa-history mr-1"></i>{{ _("Load earlier messages") }}
+						</button>
+					</div>
+					<div class="detail-messages-stream" role="log" aria-live="polite"></div>
+				</div>
+			</div>
+
+			<!-- Empty State (No Request Selected) -->
+			<div class="detail-no-selection text-center p-5">
+				<div class="no-selection-illustration mb-3">
+					<div class="no-selection-icon-circle">
+						<i class="fa fa-inbox fa-3x text-muted"></i>
+					</div>
+				</div>
+				<h5 class="text-secondary font-weight-bold mb-1">{{ _("Select a request to review messages and details.") }}</h5>
+				<p class="text-muted small max-w-sm mx-auto">
+					{{ _("Review subscriber problem, history and provenance before taking the conversation.") }}
+				</p>
+			</div>
+		</main>
+
+		<!-- RIGHT PANEL: Contact Details and Provenance -->
+		<aside class="inbox-column inbox-column-contact" aria-label="{{ _("Contact and Origin") }}">
+			<div class="contact-header-bar">
+				<h5 class="m-0 font-weight-bold">{{ _("Contact Details") }}</h5>
+			</div>
+
+			<div class="contact-content-area hidden">
+				<!-- Contact Profile Card -->
+				<div class="contact-profile-box text-center p-3 border-bottom">
+					<div class="contact-initials-badge mx-auto mb-2"></div>
+					<h5 class="contact-name-heading font-weight-bold m-0"></h5>
+					<div class="contact-sender-id small text-muted mt-1"></div>
+				</div>
+
+				<!-- Origin and Provenance Section: Channel and Account -->
+				<div class="contact-info-section p-3 border-bottom">
+					<div class="section-minor-title font-weight-bold small text-uppercase text-muted mb-2">
+						{{ _("Origin & Provenance") }}
+					</div>
+					<div class="provenance-fields-list small">
+						<div class="provenance-row mb-1">
+							<span class="text-muted">{{ _("Channel") }}:</span>
+							<span class="provenance-val-channel font-weight-medium"></span>
+						</div>
+						<div class="provenance-row mb-1">
+							<span class="text-muted">{{ _("Account") }}:</span>
+							<span class="provenance-val-account font-weight-medium"></span>
+						</div>
+						<div class="provenance-row mb-1">
+							<span class="text-muted">{{ _("Account ID") }}:</span>
+							<span class="provenance-val-account-id font-weight-medium text-monospace"></span>
+						</div>
+						<div class="provenance-row mb-1 row-public-id hidden">
+							<span class="text-muted">{{ _("Public ID") }}:</span>
+							<span class="provenance-val-public-id font-weight-medium"></span>
+						</div>
+						<div class="provenance-row mb-1">
+							<span class="text-muted">{{ _("Provider") }}:</span>
+							<span class="provenance-val-provider font-weight-medium"></span>
+						</div>
+						<div class="provenance-link-wrap mt-2 hidden">
+							<button type="button" class="btn btn-default btn-xs btn-open-account-document">
+								<i class="fa fa-external-link-alt mr-1"></i>{{ _("View Channel Account") }}
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<!-- Operational Timings -->
+				<div class="contact-info-section p-3 border-bottom">
+					<div class="section-minor-title font-weight-bold small text-uppercase text-muted mb-2">
+						{{ _("Operational Timings") }}
+					</div>
+					<div class="timing-fields-list small">
+						<div class="timing-row mb-1">
+							<span class="text-muted">{{ _("Waiting Time") }}:</span>
+							<span class="timing-val-waiting font-weight-medium"></span>
+						</div>
+						<div class="timing-row mb-1">
+							<span class="text-muted">{{ _("Last Activity") }}:</span>
+							<span class="timing-val-activity font-weight-medium"></span>
+						</div>
+						<div class="timing-row mb-1 row-agent-capacity hidden">
+							<span class="text-muted">{{ _("My Capacity") }}:</span>
+							<span class="timing-val-agent-capacity font-weight-medium"></span>
+						</div>
+						<div class="timing-row mb-1">
+							<span class="text-muted">{{ _("Registration Status") }}:</span>
+							<span class="timing-val-registration badge badge-light"></span>
+						</div>
+					</div>
+				</div>
+
+				<!-- Registered Profile Data Fields -->
+				<div class="contact-info-section p-3 border-bottom contact-custom-data-section hidden">
+					<div class="section-minor-title font-weight-bold small text-uppercase text-muted mb-2">
+						{{ _("Registration Data") }}
+					</div>
+					<div class="contact-custom-data-list small"></div>
+				</div>
+
+				<!-- Contextual Contact Actions -->
+				<div class="contact-info-section p-3">
+					<button type="button" class="btn btn-default btn-sm btn-block btn-open-contact-history">
+						<i class="fa fa-history mr-1"></i>{{ _("View Contact History") }}
+					</button>
+				</div>
+			</div>
+
+			<!-- Contact Empty State -->
+			<div class="contact-no-selection text-center p-4 text-muted">
+				<p class="small m-0">{{ _("Select a request to view contact information.") }}</p>
+			</div>
+		</aside>
+	</div>
+</div>

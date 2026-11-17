@@ -1,0 +1,22 @@
+.messaging-localized-host,
+.messaging-localized-editor,
+.messaging-localized-controls { min-width: 0; width: 100%; }
+.messaging-localized-editor { margin-bottom: var(--margin-sm, 8px); }
+.messaging-localized-controls .frappe-control { margin-bottom: var(--margin-sm, 8px); }
+.messaging-localized-controls .form-group { margin-bottom: 0; }
+.messaging-localized-controls textarea.form-control { height: 84px; min-height: 84px; resize: vertical; }
+.messaging-localized-languages { display: flex; flex-wrap: wrap; gap: 6px; }
+.messaging-localized-language {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 8px);
+    background: var(--control-bg);
+    color: var(--text-color);
+    padding: 3px 10px;
+    font-size: var(--text-xs, 12px);
+    line-height: 1.5;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+.messaging-localized-language:hover { background: var(--control-bg-on-gray); }
+.messaging-localized-language.is-selected { background: var(--control-bg-on-gray); font-weight: 600; }
+.messaging-localized-language:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }

@@ -1,0 +1,252 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Result",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "autoname": "EVL-.######",
+ "naming_rule": "Expression",
+ "title_field": "case_id",
+ "search_fields": "case_id,evaluation_run,group,language",
+ "fields": [
+  {
+   "fieldname": "evaluation_run",
+   "fieldtype": "Link",
+   "label": "Evaluation Run",
+   "read_only": 1,
+   "options": "AI Evaluation Run",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "evaluation_case",
+   "fieldtype": "Data",
+   "label": "Evaluation Case",
+   "read_only": 1
+  },
+  {
+   "fieldname": "case_id",
+   "fieldtype": "Data",
+   "label": "Case Id",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "read_only": 1,
+   "options": "Language",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "group",
+   "fieldtype": "Data",
+   "label": "Group",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "mandatory",
+   "fieldtype": "Check",
+   "label": "Mandatory",
+   "read_only": 1
+  },
+  {
+   "fieldname": "case_revision",
+   "fieldtype": "Data",
+   "label": "Case Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "read_only": 1,
+   "options": "Selected\nRunning\nPassed\nFailed\nIncomplete\nUnavailable",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "technical_valid",
+   "fieldtype": "Check",
+   "label": "Technical Valid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "functional_valid",
+   "fieldtype": "Check",
+   "label": "Functional Valid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attempt_count",
+   "fieldtype": "Int",
+   "label": "Attempt Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "latency_ms",
+   "fieldtype": "Float",
+   "label": "Latency Ms",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic",
+   "fieldtype": "Small Text",
+   "label": "Diagnostic",
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_log_ids",
+   "fieldtype": "JSON",
+   "label": "Request Log Ids",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "input_data",
+   "fieldtype": "JSON",
+   "label": "Input Data",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "expected_data",
+   "fieldtype": "JSON",
+   "label": "Expected Data",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "wire_request",
+   "fieldtype": "JSON",
+   "label": "Wire Request",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "raw_response",
+   "fieldtype": "Code",
+   "label": "Raw Response",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "normalized_response",
+   "fieldtype": "JSON",
+   "label": "Normalized Response",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "differences",
+   "fieldtype": "JSON",
+   "label": "Differences",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "case_template",
+   "fieldtype": "Link",
+   "label": "Case Template",
+   "options": "AI Evaluation Case Template",
+   "read_only": 1
+  },
+  {
+   "fieldname": "template_revision",
+   "fieldtype": "Data",
+   "label": "Template Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "localized_revision",
+   "fieldtype": "Data",
+   "label": "Localized Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "revisions_section",
+   "fieldtype": "Section Break",
+   "label": "Revisions & References",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "column_break_revisions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Payload & Comparison Evidence",
+   "collapsible": 1
+  }
+ ],
+ "field_order": [
+  "evaluation_run",
+  "case_template",
+  "evaluation_case",
+  "case_id",
+  "language",
+  "group",
+  "mandatory",
+  "sequence",
+  "column_break_summary",
+  "status",
+  "technical_valid",
+  "functional_valid",
+  "attempt_count",
+  "started_at",
+  "finished_at",
+  "latency_ms",
+  "diagnostic",
+  "revisions_section",
+  "case_revision",
+  "template_revision",
+  "column_break_revisions",
+  "localized_revision",
+  "request_log_ids",
+  "evidence_section",
+  "input_data",
+  "expected_data",
+  "wire_request",
+  "raw_response",
+  "normalized_response",
+  "differences"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "select": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "permlevel": 1
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "allow_rename": 0
+}

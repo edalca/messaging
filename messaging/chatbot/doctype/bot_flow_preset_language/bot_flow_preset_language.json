@@ -1,0 +1,77 @@
+{
+ "actions": [],
+ "creation": "2026-11-09 12:10:22.883776",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "language",
+  "configuration",
+  "application",
+  "source_method",
+  "configuration_hash",
+  "available"
+ ],
+ "fields": [
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Language",
+   "options": "Language",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_method",
+   "fieldtype": "Data",
+   "label": "Source Method",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "configuration",
+   "fieldtype": "Code",
+   "in_list_view": 1,
+   "label": "Configuration",
+   "options": "JSON",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "configuration_hash",
+   "fieldtype": "Data",
+   "label": "Configuration Hash",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "available",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Available",
+   "read_only": 1
+  }
+ ],
+ "allow_import": 0,
+ "allow_rename": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-09 18:47:50.246633",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Bot Flow Preset Language",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,46 @@
+<!-- Module glyphs use Frappe soft-icon styles and native motion controls. -->
+<svg id="messaging-symbols" aria-hidden="true" style="display: none;" class="icon" xmlns="http://www.w3.org/2000/svg">
+<style>
+@media (prefers-reduced-motion: no-preference) {
+.messaging-chat-front,
+.messaging-communication-envelope,
+.messaging-chatbot-head {
+transition: transform 0.4s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.messaging-chat-front {
+transform: translateY(calc(var(--icon-motion-opacity, 0) * -2.2px));
+}
+.messaging-chatbot-head {
+transform: translateY(calc(var(--icon-motion-opacity, 0) * -1.8px));
+}
+.messaging-communication-envelope {
+transform: translateY(calc(var(--icon-motion-opacity, 0) * -1.8px));
+}
+}
+</style>
+
+<symbol id="icon-communication-envelope-duotone" viewBox="0 0 24 24" class="soft-icon" style="overflow: visible">
+<path d="M6.3 3.6h11.4a1.8 1.8 0 0 1 1.8 1.8v6.9H4.5V5.4a1.8 1.8 0 0 1 1.8-1.8z" class="soft-body"/>
+<path d="M7.2 6.7h8.2M7.2 9.1h5.4"/>
+<g class="messaging-communication-envelope">
+<rect x="2.5" y="11.6" width="19" height="8.8" rx="2" class="soft-body"/>
+<path d="M4.6 11.6 12 17.2l7.4-5.6z" class="soft-layer"/>
+<path d="M4.6 13.1 12 17.6l7.4-4.5"/>
+</g>
+</symbol>
+
+<symbol id="icon-conversation-chat-duotone" viewBox="0 0 24 24" class="soft-icon" style="overflow: visible">
+<path d="M3.2 5.2h9.2c1.2 0 2.2 1 2.2 2.2v4.4c0 1.2-1 2.2-2.2 2.2H8.2L5.4 16.4V14H3.2c-1.2 0-2.2-1-2.2-2.2V7.4c0-1.2 1-2.2 2.2-2.2z" class="soft-body"/>
+<g class="messaging-chat-front">
+<path d="M11.2 8.4h9.4c1.15 0 2.1.95 2.1 2.1v4.2c0 1.15-.95 2.1-2.1 2.1h-1.6v2.3l-2.7-2.3h-5.1c-1.15 0-2.1-.95-2.1-2.1v-4.2c0-1.15.95-2.1 2.1-2.1z" class="soft-body"/>
+</g>
+</symbol>
+<!-- Robot outline follows the native Lucide bot geometry. -->
+<symbol id="icon-chatbot-bot-duotone" viewBox="0 0 24 24" class="soft-icon" style="overflow: visible">
+<g class="messaging-chatbot-head">
+<path d="M12 8V4H8"/>
+<rect width="16" height="12" x="4" y="8" rx="2" class="soft-body"/>
+<path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>
+</g>
+</symbol>
+</svg>

@@ -1,0 +1,456 @@
+{
+ "actions": [],
+ "autoname": "field:workflow_code",
+ "creation": "2026-11-05 20:20:26.307513",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "section_break_information",
+  "workflow_code",
+  "workflow_name",
+  "translation_cards",
+  "column_break_general",
+  "status",
+  "priority",
+  "positive_priority_key",
+  "has_parameters",
+  "section_break_semantics",
+  "initial_message_card",
+  "column_break_messages",
+  "continuation_message_card",
+  "section_break_menu",
+  "show_in_menu",
+  "menu_order",
+  "menu_translation_card",
+  "translations",
+  "input_translations",
+  "process_flow_tab",
+  "section_break_process",
+  "process_definition",
+  "process_test_status",
+  "process_test_checked_by",
+  "process_schema_version",
+  "process_test_fingerprint",
+  "column_break_fckh",
+  "process_method",
+  "process_invocation_mode",
+  "process_test_checked_at",
+  "process_test_log",
+  "section_break_parameters",
+  "parameters",
+  "section_break_outputs",
+  "outputs",
+  "section_break_internal_error",
+  "use_custom_internal_error_message",
+  "internal_error_message",
+  "process_test_evidence",
+  "process_contract",
+  "process_contract_fingerprint",
+  "output_translations",
+  "section_break_provenance",
+  "application",
+  "preset",
+  "column_break_provenance",
+  "preset_versions"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "section_break_information",
+   "fieldtype": "Section Break",
+   "label": "Flow Information"
+  },
+  {
+   "description": "Stable lowercase internal identifier (e.g. check_hours, check_balance).",
+   "fieldname": "workflow_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Flow Code",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "workflow_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Flow Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "translation_cards",
+   "fieldtype": "HTML",
+   "label": "Semantic Context"
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Disabled",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Untested\nDisabled\nEnabled\nUnavailable",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "0 for Flows without Parameters (shared); a unique positive integer (> 0) for Flows with Parameters (lower value = higher priority).",
+   "fieldname": "priority",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Priority",
+   "reqd": 1
+  },
+  {
+   "fieldname": "positive_priority_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Positive Priority Key",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_parameters",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Has Parameters",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_semantics",
+   "fieldtype": "Section Break",
+   "label": "Flow Messages"
+  },
+  {
+   "fieldname": "initial_message_card",
+   "fieldtype": "HTML",
+   "label": "Start Message"
+  },
+  {
+   "fieldname": "column_break_messages",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "continuation_message_card",
+   "fieldtype": "HTML",
+   "label": "Continuation Message"
+  },
+  {
+   "fieldname": "section_break_menu",
+   "fieldtype": "Section Break",
+   "label": "Menu or Catalog"
+  },
+  {
+   "default": "1",
+   "fieldname": "show_in_menu",
+   "fieldtype": "Check",
+   "label": "Show in Menu / Catalog"
+  },
+  {
+   "default": "10",
+   "depends_on": "eval:doc.show_in_menu",
+   "fieldname": "menu_order",
+   "fieldtype": "Int",
+   "label": "Menu Order"
+  },
+  {
+   "depends_on": "eval:doc.show_in_menu",
+   "fieldname": "menu_translation_card",
+   "fieldtype": "HTML",
+   "label": "Menu Label"
+  },
+  {
+   "fieldname": "translations",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Flow Translations",
+   "options": "Flow Translation"
+  },
+  {
+   "fieldname": "input_translations",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Input Messages by Language",
+   "options": "Flow Input Translation"
+  },
+  {
+   "fieldname": "process_flow_tab",
+   "fieldtype": "Tab Break",
+   "label": "Process Flow"
+  },
+  {
+   "fieldname": "section_break_process",
+   "fieldtype": "Section Break",
+   "label": "Process Configuration"
+  },
+  {
+   "fieldname": "process_definition",
+   "fieldtype": "Link",
+   "label": "Process Definition",
+   "options": "Process Definition",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "Untested",
+   "fieldname": "process_test_status",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Process Test Status",
+   "no_copy": 1,
+   "options": "Untested\nPassed\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_checked_by",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Tested By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "process_schema_version",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Process Schema Version",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "process_test_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Test Configuration Fingerprint",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_fckh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Dotted path to the Python/Frappe method (e.g. app.module.doctype.my_doctype.my_doctype.my_function).",
+   "fieldname": "process_method",
+   "fieldtype": "Data",
+   "label": "Process Method Path",
+   "read_only": 1
+  },
+  {
+   "default": "Internal Call (frappe.call)",
+   "fieldname": "process_invocation_mode",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Invocation Mode",
+   "options": "Internal Call (frappe.call)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "process_test_checked_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Last Process Test",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_log",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Process Test Log",
+   "no_copy": 1,
+   "options": "Process Execution Log",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_parameters",
+   "fieldtype": "Section Break",
+   "label": "Input Parameters"
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "Table",
+   "label": "Internal Inputs",
+   "options": "Flow Parameter"
+  },
+  {
+   "fieldname": "section_break_outputs",
+   "fieldtype": "Section Break",
+   "label": "Functional Outputs"
+  },
+  {
+   "fieldname": "outputs",
+   "fieldtype": "Table",
+   "label": "Outputs",
+   "mandatory_depends_on": "eval:doc.status === 'Enabled'",
+   "options": "Flow Output"
+  },
+  {
+   "fieldname": "section_break_internal_error",
+   "fieldtype": "Section Break",
+   "label": "Internal Error Response"
+  },
+  {
+   "default": "0",
+   "description": "If unchecked, inherit the default safe message from Bot Settings.",
+   "fieldname": "use_custom_internal_error_message",
+   "fieldtype": "Check",
+   "label": "Use Custom Internal Error Message"
+  },
+  {
+   "depends_on": "eval:doc.use_custom_internal_error_message",
+   "description": "Safe message shown to the user for any exception or technical failure (without traces or internal data).",
+   "fieldname": "internal_error_message",
+   "fieldtype": "HTML",
+   "label": "Custom Internal Error Message"
+  },
+  {
+   "fieldname": "process_test_evidence",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Process Test Evidence",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_contract",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Discovered Process Contract",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_contract_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Process Contract Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_translations",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Output Translations",
+   "options": "Flow Output Translation"
+  },
+  {
+   "fieldname": "section_break_provenance",
+   "fieldtype": "Section Break",
+   "label": "Registration Provenance",
+   "collapsible": 1,
+   "depends_on": "eval:doc.application || doc.preset"
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "preset",
+   "fieldtype": "Link",
+   "label": "Preset",
+   "options": "Bot Flow Presets",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_provenance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "preset_versions",
+   "fieldtype": "Code",
+   "label": "Preset Versions",
+   "options": "JSON",
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-05 23:11:22.843777",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Bot Flow",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Workspace Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Workspace Manager"
+  },
+  {
+   "read": 1,
+   "role": "Messaging Automation"
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "priority",
+ "sort_order": "ASC",
+ "states": [
+  {
+   "color": "Yellow",
+   "title": "Untested"
+  },
+  {
+   "color": "Red",
+   "title": "Disabled"
+  },
+  {
+   "color": "Green",
+   "title": "Enabled"
+  },
+  {
+   "color": "Gray",
+   "title": "Unavailable"
+  }
+ ],
+ "title_field": "workflow_name",
+ "track_changes": 1
+}

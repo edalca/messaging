@@ -1,0 +1,392 @@
+{
+ "doctype": "DocType",
+ "name": "Notification Queue",
+ "module": "Communication",
+ "engine": "InnoDB",
+ "autoname": "NTF-.######",
+ "naming_rule": "Expression",
+ "title_field": "source_name",
+ "allow_rename": 0,
+ "field_order": [
+  "notification_rule",
+  "source_application",
+  "source_doctype",
+  "source_name",
+  "document_event",
+  "column_break_trigger",
+  "condition_field",
+  "condition_value",
+  "occurrence",
+  "occurrence_key",
+  "execution_log",
+  "destination_section",
+  "account",
+  "channel",
+  "provider",
+  "account_id",
+  "column_break_destination",
+  "recipient",
+  "effective_recipient",
+  "emulator_contact",
+  "identity_key",
+  "snapshot_section",
+  "content_type",
+  "template_reference",
+  "provider_template_reference",
+  "template_revision",
+  "column_break_snapshot",
+  "delivery_mode",
+  "delivery_fingerprint",
+  "variables_json",
+  "prepared_text",
+  "rendered_content",
+  "processing_section",
+  "event_at",
+  "scheduled_at",
+  "status",
+  "next_attempt_at",
+  "last_attempt_at",
+  "attempt_count",
+  "defer_count",
+  "claim_id",
+  "previous_state",
+  "column_break_processing",
+  "handoff_at",
+  "transport_outcome",
+  "transport_reference",
+  "delivery_status",
+  "resolved_at",
+  "delivered_at",
+  "read_at",
+  "diagnostic_code"
+ ],
+ "fields": [
+  {
+   "fieldname": "notification_rule",
+   "fieldtype": "Link",
+   "label": "Notification Rule",
+   "options": "Notification Rule",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_application",
+   "fieldtype": "Data",
+   "label": "Source Application",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "label": "Source DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Source Document",
+   "options": "source_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "document_event",
+   "fieldtype": "Data",
+   "label": "Document Event",
+   "read_only": 1
+  },
+  {
+   "fieldname": "occurrence",
+   "fieldtype": "Data",
+   "label": "Occurrence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "occurrence_key",
+   "fieldtype": "Data",
+   "label": "Occurrence Key",
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_log",
+   "fieldtype": "Link",
+   "label": "Process Execution Log",
+   "options": "Process Execution Log",
+   "read_only": 1
+  },
+  {
+   "fieldname": "destination_section",
+   "fieldtype": "Section Break",
+   "label": "Destination"
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "label": "Communication Channel Account",
+   "options": "Communication Channel Account",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Link",
+   "label": "Communication Channel",
+   "options": "Communication Channel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "label": "Communication Provider",
+   "options": "Communication Provider",
+   "read_only": 1
+  },
+  {
+   "fieldname": "account_id",
+   "fieldtype": "Data",
+   "label": "Account ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recipient",
+   "fieldtype": "Data",
+   "label": "Original Recipient",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_key",
+   "fieldtype": "Data",
+   "label": "Identity Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_section",
+   "fieldtype": "Section Break",
+   "label": "Prepared Snapshot"
+  },
+  {
+   "fieldname": "content_type",
+   "fieldtype": "Select",
+   "label": "Content Type",
+   "options": "Message\nTemplate\nProvider Template\nText",
+   "read_only": 1
+  },
+  {
+   "fieldname": "template_reference",
+   "fieldtype": "Link",
+   "label": "Template Reference",
+   "read_only": 1,
+   "options": "Communication Template"
+  },
+  {
+   "fieldname": "variables_json",
+   "fieldtype": "Code",
+   "label": "Prepared Variables",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "prepared_text",
+   "fieldtype": "Long Text",
+   "label": "Prepared Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_section",
+   "fieldtype": "Section Break",
+   "label": "Processing"
+  },
+  {
+   "fieldname": "event_at",
+   "fieldtype": "Datetime",
+   "label": "Event Captured At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scheduled_at",
+   "fieldtype": "Datetime",
+   "label": "Scheduled At",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nProcessing\nDeferred\nAccepted\nRejected\nUnknown\nCancelled",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "next_attempt_at",
+   "fieldtype": "Datetime",
+   "label": "Next Evaluation At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_attempt_at",
+   "fieldtype": "Datetime",
+   "label": "Last Attempt At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attempt_count",
+   "fieldtype": "Int",
+   "label": "Attempt Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "defer_count",
+   "fieldtype": "Int",
+   "label": "Deferral Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "claim_id",
+   "fieldtype": "Data",
+   "label": "Claim ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_state",
+   "fieldtype": "Data",
+   "label": "Previous State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "handoff_at",
+   "fieldtype": "Datetime",
+   "label": "Handoff At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transport_outcome",
+   "fieldtype": "Select",
+   "label": "Transport Outcome",
+   "options": "\nAccepted\nRejected\nUnknown",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transport_reference",
+   "fieldtype": "Data",
+   "label": "Transport Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_status",
+   "fieldtype": "Select",
+   "label": "Delivery Status",
+   "options": "Pending\nSent\nFailed\nDelivered\nRead",
+   "read_only": 1
+  },
+  {
+   "fieldname": "resolved_at",
+   "fieldtype": "Datetime",
+   "label": "Resolved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivered_at",
+   "fieldtype": "Datetime",
+   "label": "Delivered At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "read_at",
+   "fieldtype": "Datetime",
+   "label": "Read At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic_code",
+   "fieldtype": "Data",
+   "label": "Diagnostic Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_recipient",
+   "fieldtype": "Data",
+   "label": "Effective Recipient",
+   "read_only": 1
+  },
+  {
+   "fieldname": "emulator_contact",
+   "fieldtype": "Link",
+   "options": "Emulator Contact",
+   "label": "Emulated Contact",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_mode",
+   "fieldtype": "Data",
+   "label": "Delivery Mode",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_fingerprint",
+   "fieldtype": "Data",
+   "label": "Delivery Configuration Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rendered_content",
+   "fieldtype": "Long Text",
+   "label": "Rendered Content",
+   "read_only": 1
+  },
+  {
+   "fieldname": "condition_field",
+   "fieldtype": "Data",
+   "label": "Condition Field",
+   "read_only": 1
+  },
+  {
+   "fieldname": "condition_value",
+   "fieldtype": "Small Text",
+   "label": "Condition Value",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_template_reference",
+   "fieldtype": "Data",
+   "label": "Provider Template Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "template_revision",
+   "fieldtype": "Data",
+   "label": "Content Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_trigger",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_destination",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_snapshot",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_processing",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1
+  }
+ ],
+ "search_fields": "notification_rule,source_name,recipient"
+}

@@ -1,0 +1,117 @@
+<div class="my-conversations" data-testid="my-conversations-root">
+	<div class="mc-shell">
+		<!-- Left Pane: Assigned Conversations List -->
+		<aside class="mc-pane mc-list-pane" data-testid="mc-list-pane">
+			<div class="mc-toolbar">
+				<div class="mc-search-row">
+					<div class="mc-search-box frappe-control" data-fieldtype="Data">
+						<div class="form-group">
+							<div class="control-input-wrapper">
+								<div class="control-input">
+									<div class="input-group mc-search-group">
+										<input
+											type="text"
+											class="input-with-feedback form-control input-xs mc-search-input"
+											data-testid="mc-search-input"
+											placeholder="{%= __("Search by contact...") %}"
+											aria-label="{%= __("Search by contact...") %}"
+											autocomplete="off"
+										/>
+										<div class="input-group-btn mr-0">
+											<button
+												type="button"
+												class="btn btn-default match-type-dropdown-btn"
+												data-toggle="dropdown"
+												aria-haspopup="true"
+												aria-expanded="false"
+												title="{%= __("Like") %}"
+											>
+												<span class="mc-search-match-icon"></span>
+											</button>
+											<ul class="dropdown-menu match-type-dropdown-menu dropdown-menu-right">
+												<li class="dropdown-item" data-match-type="=">{%= __("Equals") %}</li>
+												<li class="dropdown-item" data-match-type="like">{%= __("Like") %}</li>
+											</ul>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="filter-selector mc-channel-filter-selector">
+						<div class="btn-group mc-channel-filter-dropdown">
+							<button
+								type="button"
+								class="btn btn-default btn-sm filter-button btn-mc-channel-filter"
+								data-testid="mc-channel-filter"
+								title="{%= __("Filter by Channel") %}"
+							>
+								<span class="filter-icon button-icon"></span>
+								<span class="button-label hidden-xs">{%= __("Filter") %}</span>
+							</button>
+							<button
+								type="button"
+								class="btn btn-default btn-sm filter-x-button"
+								data-testid="mc-filter-clear"
+								title="{%= __("Clear all filters") %}"
+							>
+								<span class="filter-icon button-icon"></span>
+							</button>
+						</div>
+					</div>
+				</div>
+				<div class="mc-active-filter-bar hidden" data-testid="mc-active-filter-bar"></div>
+			</div>
+			<div class="mc-list-body" data-testid="mc-conversation-list">
+				<div class="mc-empty-list">{%= __("Loading assigned conversations...") %}</div>
+			</div>
+		</aside>
+
+		<!-- Center Pane: Thread & Composer -->
+		<main class="mc-pane mc-chat-pane" data-testid="mc-chat-pane">
+			<div class="mc-chat-empty" data-testid="mc-chat-empty">
+				<div class="mc-empty-icon"></div>
+				<div class="mc-empty-title">{%= __("Select an assigned conversation") %}</div>
+				<div class="mc-empty-desc">{%= __("Choose a conversation from the left list to read its history and reply to the subscriber.") %}</div>
+			</div>
+			<div class="mc-chat-active hidden" data-testid="mc-chat-active">
+				<header class="mc-chat-head" data-testid="mc-chat-head"></header>
+				<div class="mc-readonly-banner hidden" data-testid="mc-readonly-banner"></div>
+				<div class="mc-timeline" data-testid="mc-timeline"></div>
+				<footer class="mc-composer-area hidden" data-testid="mc-composer">
+					<div class="mc-compose-state hidden" data-testid="mc-compose-state"></div>
+					<div class="mc-compose">
+						<textarea
+							class="mc-compose-input"
+							data-testid="mc-composer-input"
+							rows="1"
+							placeholder="{%= __("Type your reply...") %}"
+							aria-label="{%= __("Type your reply...") %}"
+						></textarea>
+						<div class="mc-compose-footer">
+							<span class="mc-compose-hint">{%= __("Enter to send · Shift+Enter for new line") %}</span>
+							<button
+								type="button"
+								class="btn btn-primary mc-send-btn"
+								data-testid="mc-btn-send"
+								title="{%= __("Send") %}"
+								aria-label="{%= __("Send") %}"
+							></button>
+						</div>
+					</div>
+				</footer>
+			</div>
+		</main>
+
+		<!-- Right Pane: Contact & Operational Info -->
+		<aside class="mc-pane mc-info-pane" data-testid="mc-info-pane">
+			<div class="mc-info-header">
+				<h5 class="m-0 font-weight-bold">{%= __("Contact Details") %}</h5>
+			</div>
+			<div class="mc-info-empty" data-testid="mc-info-empty">
+				<div class="mc-empty-desc">{%= __("Contact details and operational status will appear here when you open a conversation.") %}</div>
+			</div>
+			<div class="mc-info-body hidden" data-testid="mc-info-body"></div>
+		</aside>
+	</div>
+</div>

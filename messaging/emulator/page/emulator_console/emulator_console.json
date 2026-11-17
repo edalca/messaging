@@ -1,0 +1,14 @@
+{
+ "doctype": "Page",
+ "name": "emulator-console",
+ "page_name": "emulator-console",
+ "title": "Chat Emulator",
+ "module": "Emulator",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ]
+}

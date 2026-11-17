@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Messaging</title>
+  <desc id="desc">Two overlapping square speech bubbles with white message lines on a green background.</desc>
+  <rect width="256" height="256" rx="52" fill="#78CC79"/>
+  <!-- Rear speech bubble on the right -->
+  <path d="M142 110 H199 C212 110 220 120 220 132 V168 C220 182 211 191 198 191 H195 L208 212 L179 191 H142 C128 191 119 182 119 168 V133 C119 120 128 110 142 110 Z" fill="#78CC79" stroke="#FFFFFF" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M178 137 H199 M177 155 H195" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>
+  <!-- Front speech bubble on the left. Its fill covers the overlapping rear outline. -->
+  <path d="M65 61 H143 C157 61 166 71 166 84 V138 C166 153 157 164 143 164 H100 L65 192 L69 164 H65 C52 164 43 153 43 139 V85 C43 71 52 61 65 61 Z" fill="#78CC79" stroke="#FFFFFF" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M74 91 H132 M74 110 H119 M74 129 H103" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>
+</svg>

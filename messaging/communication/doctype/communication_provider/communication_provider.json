@@ -1,0 +1,94 @@
+{
+ "doctype": "DocType",
+ "name": "Communication Provider",
+ "module": "Communication",
+ "engine": "InnoDB",
+ "field_order": [
+  "provider_id",
+  "provider_name",
+  "enabled",
+  "application",
+  "version",
+  "single_channel",
+  "fixed_channel_id",
+  "definition_hash",
+  "parameters"
+ ],
+ "fields": [
+  {
+   "fieldname": "provider_id",
+   "fieldtype": "Data",
+   "label": "Provider ID",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "provider_name",
+   "fieldtype": "Data",
+   "label": "Provider Name",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "0",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "label": "Version",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "single_channel",
+   "fieldtype": "Check",
+   "label": "Single Channel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fixed_channel_id",
+   "fieldtype": "Data",
+   "label": "Fixed Channel ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "definition_hash",
+   "fieldtype": "Data",
+   "label": "Definition Hash",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "Table",
+   "label": "Parameters",
+   "options": "Communication Provider Parameter",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "autoname": "field:provider_id",
+ "title_field": "provider_name"
+}

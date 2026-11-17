@@ -1,0 +1,137 @@
+{
+ "app": "messaging",
+ "creation": "2026-10-20 19:28:00.000000",
+ "docstatus": 0,
+ "doctype": "Sidebar",
+ "header_icon": "conversation-chat-duotone",
+ "idx": 0,
+ "items": [
+  {
+   "type": "Section Break",
+   "label": "Customer Service",
+   "collapsible": 1,
+   "keep_closed": 0,
+   "child": 0,
+   "indent": 0
+  },
+  {
+   "type": "Link",
+   "label": "Conversation Inbox",
+   "link_to": "conversation-inbox",
+   "link_type": "Page",
+   "child": 1,
+   "icon": "messages-square"
+  },
+  {
+   "type": "Link",
+   "label": "My Conversations",
+   "link_to": "my-conversations",
+   "link_type": "Page",
+   "child": 1,
+   "icon": "message-circle"
+  },
+  {
+   "type": "Link",
+   "label": "Conversation History",
+   "link_to": "conversation-history",
+   "link_type": "Page",
+   "child": 1,
+   "icon": "history"
+  },
+  {
+   "type": "Link",
+   "label": "Conversation Supervision",
+   "link_to": "conversation-supervision",
+   "link_type": "Page",
+   "child": 1,
+   "icon": "users"
+  },
+  {
+   "type": "Section Break",
+   "label": "Administration",
+   "collapsible": 1,
+   "keep_closed": 0,
+   "child": 0,
+   "indent": 0
+  },
+  {
+   "type": "Link",
+   "label": "Chat Contact",
+   "link_to": "Chat Contact",
+   "link_type": "DocType",
+   "child": 1,
+   "icon": "contact-round"
+  },
+  {
+   "type": "Link",
+   "label": "Chat Agent",
+   "link_to": "Chat Agent",
+   "link_type": "DocType",
+   "child": 1,
+   "icon": "headset"
+  },
+  {
+   "type": "Section Break",
+   "label": "History",
+   "collapsible": 1,
+   "keep_closed": 1,
+   "child": 0,
+   "indent": 0
+  },
+  {
+   "type": "Link",
+   "label": "Chat Session",
+   "link_to": "Chat Session",
+   "link_type": "DocType",
+   "child": 1,
+   "icon": "history"
+  },
+  {
+   "type": "Link",
+   "label": "Chat Message",
+   "link_to": "Chat Message",
+   "link_type": "DocType",
+   "child": 1,
+   "icon": "message-square-text"
+  },
+  {
+   "type": "Link",
+   "label": "Chat Turn",
+   "link_to": "Chat Turn",
+   "link_type": "DocType",
+   "child": 1,
+   "icon": "list-check"
+  },
+  {
+   "type": "Section Break",
+   "label": "Emulator",
+   "collapsible": 1,
+   "keep_closed": 0,
+   "child": 0
+  },
+  {
+   "type": "Link",
+   "label": "Chat Emulator",
+   "link_to": "emulator-console",
+   "link_type": "Page",
+   "icon": "messages-square",
+   "child": 1
+  },
+  {
+   "type": "Link",
+   "label": "Emulator Contact",
+   "link_to": "Emulator Contact",
+   "link_type": "DocType",
+   "icon": "contact-round",
+   "child": 1
+  }
+ ],
+ "merged_from": "[\"Conversation\"]",
+ "modified": "2026-10-21 10:01:15.826721",
+ "modified_by": "Administrator",
+ "module": "Conversation",
+ "name": "Conversation",
+ "owner": "Administrator",
+ "standard": 1,
+ "title": "Conversation"
+}

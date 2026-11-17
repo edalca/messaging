@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.pyc
 *.py~
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Distribution / packaging
 .Python
@@ -25,6 +28,10 @@ MANIFEST
 
 # Environments
 .env
+.env.*
+!.env.example
+site_config.json
+common_site_config.json
 .venv
 env/
 venv/
@@ -46,10 +53,21 @@ jspm_packages/
 *.swp
 *.comp.js
 .wnf-lang-status
-*debug.log
+*.log
+*.tmp
 
 # Helix Editor
 .helix/
 
 # Aider AI Chat
 .aider*
+
+# Private instructions and local audit evidence
+AGENTS.local.md
+.local/
+.outputs/
+
+# Local browser test artifacts
+**/playwright/.auth/
+playwright-report/
+test-results/

@@ -1,0 +1,350 @@
+{
+ "actions": [],
+ "autoname": "PEX-.######",
+ "naming_rule": "Expression",
+ "title_field": "source_name",
+ "search_fields": "source_name,source_type,execution_context,process_method,execution_outcome",
+ "creation": "2026-10-20 19:27:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_type",
+  "source_name",
+  "execution_context",
+  "workflow",
+  "process_method",
+  "schema_version",
+  "column_break_outcome",
+  "execution_outcome",
+  "functional_status",
+  "output_mode_used",
+  "executed_at",
+  "duration_ms",
+  "section_break_references",
+  "session",
+  "turn",
+  "execution_id",
+  "notification_key",
+  "source_doctype",
+  "source_document",
+  "source_event",
+  "occurrence",
+  "column_break_references",
+  "process_definition",
+  "definition_revision",
+  "runtime_revision",
+  "configuration_fingerprint",
+  "condition_identity",
+  "source_revision",
+  "output_template",
+  "output_template_revision",
+  "section_break_diagnostics",
+  "diagnostic_error_type",
+  "frappe_error_log",
+  "diagnostic_detail",
+  "redacted_arguments_json",
+  "response_summary_json",
+  "output_identity",
+  "output_flow_action",
+  "output_retry_parameter"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Execution Source",
+   "options": "Bot Flow\nNotification Rule\nHuman Availability",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "label": "Source Name",
+   "read_only": 1
+  },
+  {
+   "default": "Workflow Process",
+   "fieldname": "execution_context",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Execution Context",
+   "options": "Workflow Process\nHuman Availability\nNotification Preparation\nAdministrative Test",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "workflow",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Flow",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_method",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Process Method",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "schema_version",
+   "fieldtype": "Int",
+   "label": "Schema Version",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_outcome",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "execution_outcome",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Execution Outcome",
+   "options": "Running\nFunctional Status\nNo Result\nInternal Execution Error\nInvalid Schema Response",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.execution_outcome=='Functional Status'",
+   "fieldname": "functional_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Functional Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_mode_used",
+   "fieldtype": "Select",
+   "label": "Output Mode Used",
+   "options": "\nTemplate\nMessage\nProvider Template\nProcess Message\nInternal Error Fallback",
+   "read_only": 1
+  },
+  {
+   "default": "Now",
+   "fieldname": "executed_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Executed At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Int",
+   "label": "Duration (ms)",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_diagnostics",
+   "fieldtype": "Section Break",
+   "label": "Protected Diagnostics & Redacted Metadata"
+  },
+  {
+   "fieldname": "section_break_references",
+   "fieldtype": "Section Break",
+   "label": "Execution Context & References"
+  },
+  {
+   "fieldname": "column_break_references",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "diagnostic_error_type",
+   "fieldtype": "Data",
+   "label": "Diagnostic Error Type",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "frappe_error_log",
+   "fieldtype": "Link",
+   "label": "Frappe Error Log",
+   "options": "Error Log",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic_detail",
+   "fieldtype": "Small Text",
+   "label": "Diagnostic Detail",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Redacted argument metadata (without personal values, tokens, or secrets in plain text).",
+   "fieldname": "redacted_arguments_json",
+   "fieldtype": "Code",
+   "label": "Redacted Arguments Metadata (JSON)",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Safe result summary (without exposing sensitive user data).",
+   "fieldname": "response_summary_json",
+   "fieldtype": "Code",
+   "label": "Response Summary Metadata (JSON)",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "label": "Session",
+   "options": "Chat Session",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turn",
+   "fieldtype": "Link",
+   "label": "Turn",
+   "options": "Chat Turn",
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_id",
+   "fieldtype": "Data",
+   "label": "Execution Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notification_key",
+   "fieldtype": "Data",
+   "label": "Notification Occurrence Key",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "label": "Source DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_document",
+   "fieldtype": "Dynamic Link",
+   "label": "Source Document",
+   "options": "source_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_event",
+   "fieldtype": "Data",
+   "label": "Document Event",
+   "read_only": 1
+  },
+  {
+   "fieldname": "occurrence",
+   "fieldtype": "Data",
+   "label": "Occurrence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_definition",
+   "label": "Process Definition",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "definition_revision",
+   "label": "Process Definition Revision",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "runtime_revision",
+   "label": "Runtime Revision",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "configuration_fingerprint",
+   "label": "Configuration Fingerprint",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "condition_identity",
+   "label": "Condition Identity",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_revision",
+   "label": "Source Document Revision",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_template",
+   "label": "Output Template",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_template_revision",
+   "label": "Output Template Revision",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_identity",
+   "fieldtype": "Data",
+   "label": "Output Identity",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "output_flow_action",
+   "fieldtype": "Data",
+   "label": "Output Flow Action",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "output_retry_parameter",
+   "fieldtype": "Data",
+   "label": "Output Retry Parameter",
+   "read_only": 1,
+   "permlevel": 1
+  }
+ ],
+ "in_create": 1,
+ "links": [],
+ "modified": "2026-10-29 15:04:39.620069",
+ "modified_by": "Administrator",
+ "module": "Communication",
+ "name": "Process Execution Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Workspace Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "executed_at",
+ "sort_order": "DESC",
+ "states": []
+}

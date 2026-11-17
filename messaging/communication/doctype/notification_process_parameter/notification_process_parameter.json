@@ -1,0 +1,77 @@
+{
+ "doctype": "DocType",
+ "name": "Notification Process Parameter",
+ "module": "Communication",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "parameter_name",
+   "fieldtype": "Data",
+   "label": "Process Parameter",
+   "read_only": 0,
+   "in_list_view": 1,
+   "reqd": 1,
+   "description": "Unique input name; declared inputs are controlled by the Process."
+  },
+  {
+   "fieldname": "internal_type",
+   "fieldtype": "Select",
+   "label": "Internal Type",
+   "options": "string\ninteger\nnumber\nboolean\ndate",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "required",
+   "fieldtype": "Check",
+   "label": "Required",
+   "default": "0",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "multiple",
+   "fieldtype": "Check",
+   "label": "Multiple Input",
+   "default": "0"
+  },
+  {
+   "fieldname": "value_source",
+   "fieldtype": "Select",
+   "label": "Value Source",
+   "options": "Fixed Value\nSource Field",
+   "default": "Fixed Value",
+   "in_list_view": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "fixed_value",
+   "fieldtype": "Small Text",
+   "label": "Fixed Value",
+   "description": "Typed value; empty values are distinct from values that are not configured.",
+   "depends_on": "eval:doc.value_source=='Fixed Value'",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "source_field",
+   "fieldtype": "Autocomplete",
+   "label": "Source Field",
+   "in_list_view": 1,
+   "depends_on": "eval:doc.value_source=='Source Field'"
+  }
+ ],
+ "field_order": [
+  "parameter_name",
+  "internal_type",
+  "required",
+  "multiple",
+  "value_source",
+  "fixed_value",
+  "source_field"
+ ],
+ "permissions": [],
+ "actions": [],
+ "links": [],
+ "states": []
+}

@@ -1,0 +1,270 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Run",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "autoname": "EVR-.#####",
+ "naming_rule": "Expression",
+ "title_field": "configuration",
+ "search_fields": "configuration,provider,profile_type,status",
+ "fields": [
+  {
+   "fieldname": "configuration",
+   "fieldtype": "Link",
+   "label": "Configuration",
+   "read_only": 1,
+   "options": "AI Configuration",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "label": "Provider",
+   "read_only": 1,
+   "options": "AI Provider"
+  },
+  {
+   "fieldname": "profile_type",
+   "fieldtype": "Data",
+   "label": "Profile Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "read_only": 1,
+   "options": "Pending\nRunning\nPassed\nFailed\nIncomplete\nUnavailable",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "evidence_kind",
+   "fieldtype": "Select",
+   "label": "Evidence Kind",
+   "read_only": 1,
+   "options": "Real\nTest",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "read_only": 1,
+   "options": "User"
+  },
+  {
+   "fieldname": "requested_at",
+   "fieldtype": "Datetime",
+   "label": "Requested At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "deadline_at",
+   "fieldtype": "Datetime",
+   "label": "Deadline At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "invalidated_at",
+   "fieldtype": "Datetime",
+   "label": "Invalidated At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "invalidation_reason",
+   "fieldtype": "Small Text",
+   "label": "Invalidation Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic",
+   "fieldtype": "Small Text",
+   "label": "Diagnostic",
+   "read_only": 1
+  },
+  {
+   "fieldname": "seed",
+   "fieldtype": "Data",
+   "label": "Seed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "policy_version",
+   "fieldtype": "Data",
+   "label": "Policy Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "configuration_generation",
+   "fieldtype": "Data",
+   "label": "Configuration Generation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dependency_fingerprint",
+   "fieldtype": "Data",
+   "label": "Dependency Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "required_count",
+   "fieldtype": "Int",
+   "label": "Required Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "selected_count",
+   "fieldtype": "Int",
+   "label": "Selected Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "executed_count",
+   "fieldtype": "Int",
+   "label": "Executed Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "passed_count",
+   "fieldtype": "Int",
+   "label": "Passed Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "call_count",
+   "fieldtype": "Int",
+   "label": "Call Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reproduces",
+   "fieldtype": "Link",
+   "label": "Reproduces",
+   "read_only": 1,
+   "options": "AI Evaluation Run"
+  },
+  {
+   "fieldname": "results_panel",
+   "fieldtype": "HTML",
+   "label": "Evaluation Results",
+   "read_only": 1
+  },
+  {
+   "fieldname": "manifest",
+   "fieldtype": "JSON",
+   "label": "Manifest",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "JSON",
+   "label": "Summary",
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "column_break_run",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "diagnostics_section",
+   "fieldtype": "Section Break",
+   "label": "Diagnostics"
+  },
+  {
+   "fieldname": "results_section",
+   "fieldtype": "Section Break",
+   "label": "Evaluation Results"
+  },
+  {
+   "fieldname": "technical_tab",
+   "fieldtype": "Tab Break",
+   "label": "Technical Details"
+  },
+  {
+   "fieldname": "counts_section",
+   "fieldtype": "Section Break",
+   "label": "Counts & Policy"
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Manifest & Summary",
+   "collapsible": 1
+  }
+ ],
+ "field_order": [
+  "general_tab",
+  "configuration",
+  "provider",
+  "profile_type",
+  "status",
+  "evidence_kind",
+  "reproduces",
+  "column_break_run",
+  "requested_by",
+  "requested_at",
+  "started_at",
+  "finished_at",
+  "deadline_at",
+  "invalidated_at",
+  "diagnostics_section",
+  "diagnostic",
+  "invalidation_reason",
+  "results_section",
+  "results_panel",
+  "technical_tab",
+  "counts_section",
+  "required_count",
+  "selected_count",
+  "executed_count",
+  "passed_count",
+  "call_count",
+  "column_break_counts",
+  "seed",
+  "policy_version",
+  "configuration_generation",
+  "dependency_fingerprint",
+  "evidence_section",
+  "manifest",
+  "summary"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "select": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "permlevel": 1
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "allow_rename": 0
+}

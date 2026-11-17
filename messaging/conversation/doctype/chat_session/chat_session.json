@@ -1,0 +1,267 @@
+{
+ "doctype": "DocType",
+ "name": "Chat Session",
+ "module": "Conversation",
+ "autoname": "SES-.######",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "contact",
+  "channel",
+  "account",
+  "status",
+  "active_key",
+  "column_break_general",
+  "active_flow",
+  "last_activity",
+  "expires_at",
+  "last_event_at",
+  "activity_section",
+  "message_sequence",
+  "column_break_activity",
+  "last_incoming_sequence",
+  "read_sequence",
+  "state_tab",
+  "dialogue_state",
+  "human_tab",
+  "human_requested_at",
+  "human_request_turn",
+  "assigned_agent",
+  "assigned_at",
+  "opened_at",
+  "activity_column",
+  "paused_at",
+  "closed_at",
+  "closed_by",
+  "close_reason",
+  "human_requests",
+  "human_assignment_dispatch"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Chat Contact",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Data",
+   "label": "Account",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Active\nCapturing\nExecuting\nRecovery Required\nHuman Requested\nHuman Queued\nHuman Active\nHuman Paused\nClosed\nExpired",
+   "default": "Active",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "active_key",
+   "fieldtype": "Data",
+   "label": "Active Key",
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "active_flow",
+   "fieldtype": "Link",
+   "label": "Active Flow",
+   "options": "Bot Flow",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_activity",
+   "fieldtype": "Datetime",
+   "label": "Last Activity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "expires_at",
+   "fieldtype": "Datetime",
+   "label": "Expires At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_event_at",
+   "fieldtype": "Datetime",
+   "label": "Last Event At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "activity_section",
+   "fieldtype": "Section Break",
+   "label": "Message Sequences"
+  },
+  {
+   "fieldname": "column_break_activity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "state_tab",
+   "fieldtype": "Tab Break",
+   "label": "Dialogue State"
+  },
+  {
+   "fieldname": "dialogue_state",
+   "fieldtype": "Code",
+   "label": "Dialogue State",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "human_tab",
+   "fieldtype": "Tab Break",
+   "label": "Human Support"
+  },
+  {
+   "fieldname": "human_requested_at",
+   "fieldtype": "Datetime",
+   "label": "Human Requested At",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "human_request_turn",
+   "fieldtype": "Link",
+   "label": "Human Request Turn",
+   "options": "Chat Turn",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assigned_agent",
+   "fieldtype": "Link",
+   "label": "Assigned Agent",
+   "options": "User",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "assigned_at",
+   "fieldtype": "Datetime",
+   "label": "Assigned At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "opened_at",
+   "fieldtype": "Datetime",
+   "label": "Opened At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paused_at",
+   "fieldtype": "Datetime",
+   "label": "Paused At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "closed_at",
+   "fieldtype": "Datetime",
+   "label": "Closed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "closed_by",
+   "fieldtype": "Link",
+   "label": "Closed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "close_reason",
+   "fieldtype": "Select",
+   "label": "Close Reason",
+   "options": "\nManual\nInactivity\nTechnical Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "activity_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "message_sequence",
+   "fieldtype": "Int",
+   "label": "Message Sequence",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "last_incoming_sequence",
+   "fieldtype": "Int",
+   "label": "Last Incoming Sequence",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "read_sequence",
+   "fieldtype": "Int",
+   "label": "Read Sequence",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "human_requests",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Human Request Data",
+   "hidden": 1,
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "human_assignment_dispatch",
+   "fieldtype": "Link",
+   "options": "Bot Dispatch",
+   "label": "Human Assignment Notice",
+   "hidden": 1,
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "permlevel": 1,
+   "read": 1
+  },
+  {
+   "role": "Messaging Agent",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "allow_rename": 0,
+ "actions": [],
+ "links": [],
+ "states": []
+}

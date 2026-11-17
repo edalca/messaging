@@ -1,0 +1,182 @@
+{
+ "doctype": "DocType",
+ "name": "Communication Channel",
+ "module": "Communication",
+ "engine": "InnoDB",
+ "field_order": [
+  "provider",
+  "channel_name",
+  "column_break_channel",
+  "enabled",
+  "single_provider_key",
+  "parameters_section",
+  "parameter_controls",
+  "parameters",
+  "section_quotas",
+  "quotas_enabled",
+  "daily_quota_limit",
+  "monthly_quota_limit",
+  "quota_timezone",
+  "column_break_quotas",
+  "quota_consumption_basis",
+  "composite_response_single_unit",
+  "quota_reservation_ttl_seconds",
+  "reconcile_quota_on_acceptance",
+  "section_courtesy",
+  "quota_courtesy_enabled",
+  "column_break_courtesy",
+  "quota_courtesy_max_per_cycle"
+ ],
+ "fields": [
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "label": "Provider",
+   "options": "Communication Provider",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "channel_name",
+   "fieldtype": "Data",
+   "label": "Channel Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "0",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_channel",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "parameters_section",
+   "fieldtype": "Section Break",
+   "label": "Provider Parameters"
+  },
+  {
+   "fieldname": "single_provider_key",
+   "fieldtype": "Data",
+   "label": "Single Provider Key",
+   "unique": 1,
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "parameter_controls",
+   "fieldtype": "HTML",
+   "label": "Parameters"
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "Table",
+   "label": "Parameters",
+   "options": "Communication Provider Value",
+   "hidden": 1
+  },
+  {
+   "fieldname": "section_quotas",
+   "fieldtype": "Section Break",
+   "label": "Automatic Reply Quotas"
+  },
+  {
+   "default": "0",
+   "fieldname": "quotas_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Automatic Reply Quotas"
+  },
+  {
+   "description": "Daily limit based on a rolling 24-hour window.",
+   "fieldname": "daily_quota_limit",
+   "fieldtype": "Int",
+   "label": "Daily Quota Limit (24h Rolling Window)"
+  },
+  {
+   "description": "Monthly limit per calendar month in the configured timezone.",
+   "fieldname": "monthly_quota_limit",
+   "fieldtype": "Int",
+   "label": "Monthly Quota Limit (Calendar Month)"
+  },
+  {
+   "fieldname": "quota_timezone",
+   "fieldtype": "Autocomplete",
+   "label": "Applicable Quota Timezone",
+   "mandatory_depends_on": "eval:doc.quotas_enabled"
+  },
+  {
+   "fieldname": "column_break_quotas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Consumption is based on automated outgoing messages accepted by the provider, not delivery or read receipts.",
+   "fieldname": "quota_consumption_basis",
+   "fieldtype": "Select",
+   "label": "Quota Consumption Trigger",
+   "options": "\nProvider Accepted",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "A composite response in a single message counts as one unit unless exempt.",
+   "fieldname": "composite_response_single_unit",
+   "fieldtype": "Check",
+   "label": "Composite Response in Single Message Counts as 1 Unit",
+   "read_only": 1
+  },
+  {
+   "description": "Transactional reservation duration in seconds before reconciling provider acceptance.",
+   "fieldname": "quota_reservation_ttl_seconds",
+   "fieldtype": "Int",
+   "label": "Quota Reservation TTL (Seconds)"
+  },
+  {
+   "default": "0",
+   "fieldname": "reconcile_quota_on_acceptance",
+   "fieldtype": "Check",
+   "label": "Reconcile Quota Reservation on Provider Acceptance",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_courtesy",
+   "fieldtype": "Section Break",
+   "label": "Quota Courtesy"
+  },
+  {
+   "default": "0",
+   "description": "Allow an exempt courtesy message when the contact reaches the quota limit (independent of the greeting).",
+   "fieldname": "quota_courtesy_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Courtesy Message"
+  },
+  {
+   "fieldname": "column_break_courtesy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.quota_courtesy_enabled",
+   "fieldname": "quota_courtesy_max_per_cycle",
+   "fieldtype": "Int",
+   "label": "Max Courtesy Notices Per Quota Cycle",
+   "mandatory_depends_on": "eval:doc.quota_courtesy_enabled"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "autoname": "hash",
+ "title_field": "channel_name",
+ "search_fields": "channel_name,provider"
+}

@@ -1,0 +1,35 @@
+{
+ "doctype": "DocType",
+ "name": "Bot Parameter Translation",
+ "module": "Chatbot",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "language",
+  "request_phrase"
+ ],
+ "fields": [
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "request_phrase",
+   "fieldtype": "Small Text",
+   "label": "Request Phrase",
+   "in_list_view": 1,
+   "columns": 7,
+   "ignore_xss_filter": 1
+  }
+ ],
+ "permissions": [],
+ "links": [],
+ "actions": [],
+ "states": []
+}

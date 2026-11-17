@@ -1,0 +1,203 @@
+{
+ "doctype": "DocType",
+ "name": "Chat Turn",
+ "module": "Conversation",
+ "autoname": "TRN-.######",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "event_key",
+  "contact",
+  "session",
+  "dispatch",
+  "column_break_general",
+  "status",
+  "received_at",
+  "event_at",
+  "details_tab",
+  "inbox_section",
+  "receipt_order",
+  "inbox_state",
+  "claimed_at",
+  "column_break_inbox",
+  "inbox_diagnostic",
+  "consumed_by",
+  "trace_section",
+  "input_summary",
+  "decisions",
+  "executions",
+  "request_context"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "event_key",
+   "fieldtype": "Data",
+   "label": "Event Key",
+   "unique": 1,
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Chat Contact",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "label": "Session",
+   "options": "Chat Session",
+   "reqd": 0,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nProcessing\nComplete\nIgnored\nQuota Blocked\nRecovery Required\nHuman Paused",
+   "default": "Processing",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "received_at",
+   "fieldtype": "Datetime",
+   "label": "Received At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "event_at",
+   "fieldtype": "Datetime",
+   "label": "Event At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dispatch",
+   "fieldtype": "Link",
+   "label": "Dispatch",
+   "options": "Bot Dispatch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "details_tab",
+   "fieldtype": "Tab Break",
+   "label": "Turn Details"
+  },
+  {
+   "fieldname": "inbox_section",
+   "fieldtype": "Section Break",
+   "label": "Inbox Processing"
+  },
+  {
+   "fieldname": "column_break_inbox",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "trace_section",
+   "fieldtype": "Section Break",
+   "label": "Trace & Decisions"
+  },
+  {
+   "fieldname": "input_summary",
+   "fieldtype": "Code",
+   "label": "Input Summary",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "decisions",
+   "fieldtype": "Code",
+   "label": "Decisions",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "executions",
+   "fieldtype": "Code",
+   "label": "Executions",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_context",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Pending Input Context",
+   "permlevel": 1,
+   "read_only": 1,
+   "hidden": 1,
+   "description": "Private resumable input metadata; text remains in Chat Message and this context is cleared after processing."
+  },
+  {
+   "fieldname": "receipt_order",
+   "label": "Receipt Order",
+   "fieldtype": "Int",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inbox_state",
+   "label": "Inbox State",
+   "fieldtype": "Select",
+   "read_only": 1,
+   "options": "\nPending\nRunning\nDone\nBlocked"
+  },
+  {
+   "fieldname": "claimed_at",
+   "label": "Claimed At",
+   "fieldtype": "Datetime",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inbox_diagnostic",
+   "label": "Inbox Diagnostic",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consumed_by",
+   "label": "Consumed By",
+   "fieldtype": "Link",
+   "read_only": 1,
+   "options": "Chat Turn"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "permlevel": 1,
+   "read": 1
+  },
+  {
+   "role": "Messaging Automation",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "allow_rename": 0,
+ "actions": [],
+ "links": [],
+ "states": []
+}

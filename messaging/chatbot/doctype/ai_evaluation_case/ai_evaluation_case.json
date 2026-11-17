@@ -1,0 +1,224 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Case",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "case_id",
+   "fieldtype": "Data",
+   "label": "Case Id",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "case_template",
+   "fieldtype": "Link",
+   "label": "Case Template",
+   "options": "AI Evaluation Case Template",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "profile_type",
+   "fieldtype": "Select",
+   "label": "Profile Type",
+   "options": "Decision\nParameter Extraction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "variant",
+   "fieldtype": "Data",
+   "label": "Variant",
+   "default": "default",
+   "reqd": 1,
+   "description": "Use a distinct variant only for alternate wording of the same functional scenario."
+  },
+  {
+   "fieldname": "group",
+   "fieldtype": "Data",
+   "label": "Group",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "input_text",
+   "fieldtype": "Text",
+   "label": "Input Text",
+   "reqd": 1
+  },
+  {
+   "fieldname": "decision_section",
+   "fieldtype": "Section Break",
+   "label": "Decision Language Values",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  },
+  {
+   "fieldname": "flow_texts",
+   "fieldtype": "Table",
+   "label": "Available Flows",
+   "options": "AI Evaluation Localized Text"
+  },
+  {
+   "fieldname": "expected_section",
+   "fieldtype": "Section Break",
+   "label": "Expected Decision",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  },
+  {
+   "fieldname": "ambiguous",
+   "fieldtype": "Check",
+   "label": "Ambiguous"
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "label": "Outcome",
+   "options": "recognized\nunrecognized\nambiguous\nempty_catalog",
+   "default": "recognized"
+  },
+  {
+   "fieldname": "flows",
+   "fieldtype": "Table",
+   "label": "Expected Flows",
+   "options": "AI Evaluation Reference"
+  },
+  {
+   "fieldname": "excluded_flows",
+   "fieldtype": "Table",
+   "label": "Excluded Flows",
+   "options": "AI Evaluation Reference"
+  },
+  {
+   "fieldname": "extraction_section",
+   "fieldtype": "Section Break",
+   "label": "Expected Extraction",
+   "depends_on": "eval:doc.profile_type==='Parameter Extraction'"
+  },
+  {
+   "fieldname": "expected_parameters",
+   "fieldtype": "Table",
+   "label": "Expected Parameters",
+   "options": "AI Evaluation Expected Parameter"
+  },
+  {
+   "fieldname": "expected_values",
+   "fieldtype": "Table",
+   "label": "Expected Values",
+   "options": "AI Evaluation Expected Value"
+  },
+  {
+   "fieldname": "diagnostic_section",
+   "fieldtype": "Section Break",
+   "label": "Materialized Contract and Revisions",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "input_data",
+   "fieldtype": "JSON",
+   "label": "Input Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "expected_data",
+   "fieldtype": "JSON",
+   "label": "Expected Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "template_revision",
+   "fieldtype": "Data",
+   "label": "Template Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "localized_revision",
+   "fieldtype": "Data",
+   "label": "Localized Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "definition_revision",
+   "fieldtype": "Data",
+   "label": "Definition Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "greeting_detected",
+   "fieldtype": "Check",
+   "label": "Greeting Detected",
+   "default": "0",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  },
+  {
+   "fieldname": "human_attention_requested",
+   "fieldtype": "Check",
+   "label": "Human Attention Requested",
+   "default": "0",
+   "depends_on": "eval:doc.profile_type==='Decision'"
+  }
+ ],
+ "field_order": [
+  "case_id",
+  "case_template",
+  "profile_type",
+  "language",
+  "variant",
+  "group",
+  "input_text",
+  "decision_section",
+  "flow_texts",
+  "expected_section",
+  "greeting_detected",
+  "human_attention_requested",
+  "ambiguous",
+  "outcome",
+  "flows",
+  "excluded_flows",
+  "extraction_section",
+  "expected_parameters",
+  "expected_values",
+  "diagnostic_section",
+  "input_data",
+  "expected_data",
+  "template_revision",
+  "localized_revision",
+  "definition_revision",
+  "application"
+ ],
+ "istable": 0,
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "select": 1
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "title_field": "case_id",
+ "search_fields": "case_id,case_template,language,group",
+ "sort_field": "case_id",
+ "sort_order": "ASC"
+}

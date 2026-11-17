@@ -1,0 +1,49 @@
+{
+ "doctype": "DocType",
+ "name": "Notification Rule Event",
+ "module": "Communication",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "document_event",
+  "field_name",
+  "value",
+  "validation_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "document_event",
+   "fieldtype": "Select",
+   "label": "Events",
+   "options": "after_insert\non_update\non_submit\non_cancel\non_update_after_submit",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "field_name",
+   "fieldtype": "Autocomplete",
+   "label": "Field",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Small Text",
+   "label": "Value",
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Data",
+   "label": "Validated",
+   "read_only": 1,
+   "is_virtual": 1,
+   "in_list_view": 1,
+   "columns": 2
+  }
+ ],
+ "permissions": []
+}

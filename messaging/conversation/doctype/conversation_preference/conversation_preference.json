@@ -1,0 +1,119 @@
+{
+ "doctype": "DocType",
+ "name": "Conversation Preference",
+ "module": "Conversation",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "identity_tab",
+   "fieldtype": "Tab Break",
+   "label": "Identity"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Data",
+   "label": "Account",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sender",
+   "fieldtype": "Data",
+   "label": "Sender",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "preference_key",
+   "fieldtype": "Data",
+   "label": "Preference Key",
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "state_section",
+   "fieldtype": "Section Break",
+   "label": "Presentation State"
+  },
+  {
+   "fieldname": "is_pinned",
+   "fieldtype": "Check",
+   "label": "Pinned",
+   "default": "0",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "pinned_at",
+   "fieldtype": "Datetime",
+   "label": "Pinned At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_archived",
+   "fieldtype": "Check",
+   "label": "Archived",
+   "default": "0",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "archived_at",
+   "fieldtype": "Datetime",
+   "label": "Archived At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cleared_before",
+   "fieldtype": "Datetime",
+   "label": "Cleared Before",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "identity_tab",
+  "user",
+  "channel",
+  "account",
+  "sender",
+  "preference_key",
+  "state_section",
+  "is_pinned",
+  "pinned_at",
+  "is_archived",
+  "archived_at",
+  "cleared_before"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

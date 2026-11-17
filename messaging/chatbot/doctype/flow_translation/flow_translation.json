@@ -1,0 +1,60 @@
+{
+ "doctype": "DocType",
+ "name": "Flow Translation",
+ "module": "Chatbot",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "language",
+  "menu_label",
+  "menu_description",
+  "semantic_description",
+  "internal_error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "internal_error_message",
+   "fieldtype": "Small Text",
+   "label": "Custom Internal Error Message",
+   "ignore_xss_filter": 1
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "semantic_description",
+   "fieldtype": "Small Text",
+   "label": "Semantic Description",
+   "in_list_view": 1,
+   "columns": 3,
+   "ignore_xss_filter": 1
+  },
+  {
+   "fieldname": "menu_label",
+   "fieldtype": "Data",
+   "label": "Menu Label",
+   "in_list_view": 1,
+   "columns": 2,
+   "ignore_xss_filter": 1
+  },
+  {
+   "fieldname": "menu_description",
+   "fieldtype": "Small Text",
+   "label": "Menu Description",
+   "in_list_view": 1,
+   "columns": 3,
+   "ignore_xss_filter": 1
+  }
+ ],
+ "permissions": [],
+ "links": [],
+ "actions": [],
+ "states": []
+}

@@ -1,0 +1,110 @@
+{
+ "doctype": "DocType",
+ "name": "Bot Flow Presets",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "istable": 0,
+ "fields": [
+  {
+   "fieldname": "preset_key",
+   "fieldtype": "Data",
+   "label": "Preset Key",
+   "reqd": 1,
+   "unique": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "preset_name",
+   "fieldtype": "Data",
+   "label": "Preset Name",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_definition",
+   "fieldtype": "Link",
+   "label": "Process Definition",
+   "options": "Process Definition",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_method",
+   "fieldtype": "Data",
+   "label": "Source Method",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "configuration",
+   "fieldtype": "Code",
+   "label": "Configuration",
+   "options": "JSON",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "configuration_hash",
+   "fieldtype": "Data",
+   "label": "Configuration Hash",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "available",
+   "fieldtype": "Check",
+   "label": "Available",
+   "default": "1",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "languages",
+   "fieldtype": "Table",
+   "label": "Languages",
+   "options": "Bot Flow Preset Language",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "preset_key",
+  "preset_name",
+  "process_definition",
+  "application",
+  "source_method",
+  "configuration",
+  "configuration_hash",
+  "available",
+  "languages"
+ ],
+ "actions": [],
+ "links": [],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1,
+ "autoname": "field:preset_key",
+ "title_field": "preset_name",
+ "search_fields": "preset_name,process_definition,application",
+ "allow_import": 0,
+ "allow_rename": 0
+}

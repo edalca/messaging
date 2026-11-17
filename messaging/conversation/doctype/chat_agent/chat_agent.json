@@ -1,0 +1,109 @@
+{
+ "doctype": "DocType",
+ "name": "Chat Agent",
+ "module": "Conversation",
+ "autoname": "AGENT-.#####",
+ "naming_rule": "Expression",
+ "title_field": "user",
+ "search_fields": "user,channel,account",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Data",
+   "label": "Account",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "scope_key",
+   "fieldtype": "Data",
+   "label": "Scope Key",
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "availability_section",
+   "fieldtype": "Section Break",
+   "label": "Agent Availability"
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "available",
+   "fieldtype": "Check",
+   "label": "Available",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_availability",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "capacity",
+   "fieldtype": "Int",
+   "label": "Concurrent Conversations",
+   "default": "1",
+   "reqd": 1,
+   "in_list_view": 1
+  }
+ ],
+ "field_order": [
+  "general_tab",
+  "user",
+  "channel",
+  "column_break_identity",
+  "account",
+  "scope_key",
+  "availability_section",
+  "enabled",
+  "available",
+  "column_break_availability",
+  "capacity"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

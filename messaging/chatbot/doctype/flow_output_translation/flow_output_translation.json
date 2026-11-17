@@ -1,0 +1,41 @@
+{
+ "doctype": "DocType",
+ "name": "Flow Output Translation",
+ "module": "Chatbot",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "language",
+  "status_code",
+  "template_reference"
+ ],
+ "fields": [
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "status_code",
+   "fieldtype": "Data",
+   "label": "Functional Status",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "template_reference",
+   "fieldtype": "Link",
+   "label": "Bot Flow Template",
+   "options": "Bot Flow Template",
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [],
+ "links": [],
+ "actions": [],
+ "states": []
+}

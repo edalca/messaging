@@ -1,0 +1,53 @@
+{
+ "doctype": "DocType",
+ "name": "Notification Outcome",
+ "module": "Communication",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "status_code",
+   "fieldtype": "Data",
+   "label": "Functional Status",
+   "read_only": 1,
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "template_reference",
+   "fieldtype": "Link",
+   "label": "Communication Template",
+   "options": "Communication Template",
+   "in_list_view": 1,
+   "columns": 6
+  },
+  {
+   "fieldname": "output_fields",
+   "fieldtype": "Code",
+   "label": "Declared Output Fields",
+   "options": "JSON",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "send",
+   "fieldtype": "Check",
+   "label": "Send",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 2
+  }
+ ],
+ "field_order": [
+  "status_code",
+  "template_reference",
+  "output_fields",
+  "send"
+ ],
+ "permissions": [],
+ "actions": [],
+ "links": [],
+ "states": []
+}

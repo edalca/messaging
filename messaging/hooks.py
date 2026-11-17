@@ -4,22 +4,21 @@ app_publisher = "Edwin Carrillo"
 app_description = "Generic messaging and communication engine"
 app_email = "edwinalonso162@hotmail.com"
 app_license = "mit"
+app_logo_url = "/assets/messaging/icons/messaging.svg"
 
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = []
 
 # Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "messaging",
-# 		"logo": "/assets/messaging/logo.png",
-# 		"title": "Messaging",
-# 		"route": "/messaging",
-# 		"has_permission": "messaging.api.permission.has_app_permission",
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "messaging",
+		"logo": app_logo_url,
+		"title": "Messaging",
+	}
+]
 
 # The dock, the rail down the left of the desk, is a document rather than a hook. Author it in
 # Manage Dock on a developer-mode site and press Export to App, and it is written to
@@ -61,7 +60,7 @@ app_license = "mit"
 # Svg Icons
 # ------------------
 # include app icons in desk
-# app_include_icons = "messaging/public/icons.svg"
+app_include_icons = ["/assets/messaging/icons/icons.svg"]
 
 # Home Pages
 # ----------
@@ -98,6 +97,13 @@ app_license = "mit"
 # before_install = "messaging.install.before_install"
 # after_install = "messaging.install.after_install"
 
+after_install = "messaging.setup.after_install"
+
+# Migration
+# ------------
+
+after_migrate = "messaging.setup.after_migrate"
+
 # Uninstallation
 # ------------
 
@@ -118,7 +124,10 @@ app_license = "mit"
 # Name of the app being uninstalled is passed as an argument
 
 # before_app_uninstall = "messaging.utils.before_app_uninstall"
-# after_app_uninstall = "messaging.utils.after_app_uninstall"
+before_app_uninstall = "messaging.setup.before_app_uninstall"
+after_app_uninstall = (
+	"messaging.communication.doctype.process_definition.process_definition.after_app_uninstall"
+)
 
 # Build
 # ------------------
@@ -155,6 +164,23 @@ app_license = "mit"
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
 # }
 
+# Human operations share one account scope and assignment policy in Desk and APIs.
+permission_query_conditions = {
+	"AI Request Log": "messaging.chatbot.doctype.ai_request_log.ai_request_log.get_permission_query_conditions",
+	"Chat Session": "messaging.conversation.doctype.chat_session.permissions.session_query",
+	"Chat Contact": "messaging.conversation.doctype.chat_session.permissions.contact_query",
+	"Chat Message": "messaging.conversation.doctype.chat_session.permissions.message_query",
+	"Conversation Preference": "messaging.conversation.doctype.conversation_preference.conversation_preference.preference_query",
+}
+
+has_permission = {
+	"AI Request Log": "messaging.chatbot.doctype.ai_request_log.ai_request_log.has_permission",
+	"Chat Session": "messaging.conversation.doctype.chat_session.permissions.session_permission",
+	"Chat Contact": "messaging.conversation.doctype.chat_session.permissions.contact_permission",
+	"Chat Message": "messaging.conversation.doctype.chat_session.permissions.message_permission",
+	"Conversation Preference": "messaging.conversation.doctype.conversation_preference.conversation_preference.preference_permission",
+}
+
 # Document Events
 # ---------------
 # Hook on document methods and events
@@ -166,6 +192,44 @@ app_license = "mit"
 # 		"on_trash": "method"
 # 	}
 # }
+
+# Observe business events independently of explicit channel ingress.
+doc_events = {
+	"Process Definition": {
+		"on_update": [
+			"messaging.chatbot.doctype.bot_flow.bot_flow.invalidate_process_approval",
+			"messaging.communication.doctype.notification_rule.notification_rule.invalidate_process_approval",
+		],
+	},
+	"AI Provider": {
+		"on_update": [
+			"messaging.chatbot.doctype.ai_configuration.ai_configuration.provider_changed",
+			"messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+		],
+	},
+	"Bot Settings": {
+		"on_update": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed"
+	},
+	"Bot Flow": {
+		"on_update": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+		"after_delete": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+	},
+	"AI Evaluation Case Template": {
+		"on_update": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+		"after_delete": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+	},
+	"AI Evaluation Case": {
+		"on_update": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+		"after_delete": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
+	},
+	"*": {
+		"after_insert": "messaging.communication.doctype.notification_rule.events.document_event",
+		"on_update": "messaging.communication.doctype.notification_rule.events.document_event",
+		"on_submit": "messaging.communication.doctype.notification_rule.events.document_event",
+		"on_cancel": "messaging.communication.doctype.notification_rule.events.document_event",
+		"on_update_after_submit": "messaging.communication.doctype.notification_rule.events.document_event",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
@@ -187,6 +251,16 @@ app_license = "mit"
 # 		"messaging.tasks.monthly"
 # 	],
 # }
+
+scheduler_events = {
+	"cron": {
+		"* * * * *": [
+			"messaging.communication.doctype.notification_queue.dispatch.dispatch_due",
+			"messaging.conversation.doctype.chat_turn.inbox.recover_pending",
+		]
+	},
+	"hourly": ["messaging.conversation.doctype.chat_session.human.close_inactive"],
+}
 
 # Testing
 # -------
@@ -223,6 +297,11 @@ app_license = "mit"
 # -----------------------------------------------------------
 
 # ignore_links_on_delete = ["Communication", "ToDo"]
+
+# Session Events
+# --------------
+
+boot_session = "messaging.boot.boot_session"
 
 # Request Events
 # ----------------
@@ -277,3 +356,5 @@ app_license = "mit"
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
+# Technical declarations use the single public Registry hook.
+messaging_registry = "messaging.presets.register.register"

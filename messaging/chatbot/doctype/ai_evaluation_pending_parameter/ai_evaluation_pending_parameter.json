@@ -1,0 +1,31 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Pending Parameter",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "ref",
+   "fieldtype": "Data",
+   "label": "Ref",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "parameter_type",
+   "fieldtype": "Select",
+   "label": "Parameter Type",
+   "options": "String\nInt\nDate\nName\nExpression",
+   "reqd": 1,
+   "in_list_view": 1
+  }
+ ],
+ "field_order": [
+  "ref",
+  "parameter_type"
+ ],
+ "istable": 1,
+ "permissions": [],
+ "track_changes": 0,
+ "allow_rename": 0
+}

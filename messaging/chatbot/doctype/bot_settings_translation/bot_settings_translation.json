@@ -1,0 +1,38 @@
+{
+ "doctype": "DocType",
+ "name": "Bot Settings Translation",
+ "module": "Chatbot",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "message_key",
+  "language",
+  "message"
+ ],
+ "fields": [
+  {
+   "fieldname": "message_key",
+   "fieldtype": "Data",
+   "label": "Message Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "label": "Message",
+   "ignore_xss_filter": 1
+  }
+ ],
+ "permissions": [],
+ "links": [],
+ "actions": [],
+ "states": []
+}

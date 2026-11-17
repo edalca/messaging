@@ -1,0 +1,33 @@
+{
+ "doctype": "DocType",
+ "name": "AI Configuration Value",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "field_order": [
+  "parameter_key",
+  "value",
+  "secret_value"
+ ],
+ "fields": [
+  {
+   "fieldname": "parameter_key",
+   "fieldtype": "Data",
+   "label": "Parameter Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Long Text",
+   "label": "Value"
+  },
+  {
+   "fieldname": "secret_value",
+   "fieldtype": "Password",
+   "label": "Secret Value"
+  }
+ ],
+ "permissions": [],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "istable": 1
+}

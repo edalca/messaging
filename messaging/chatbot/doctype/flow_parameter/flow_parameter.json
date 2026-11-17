@@ -1,0 +1,99 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-20 19:20:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "process_argument",
+  "internal_type",
+  "allow_multiple_values",
+  "parameter",
+  "column_break_capture",
+  "required",
+  "capture_order",
+  "minimum_values",
+  "maximum_values"
+ ],
+ "fields": [
+  {
+   "fieldname": "parameter",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Linked Bot Parameter",
+   "options": "Bot Parameter",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_capture",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "required",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Required"
+  },
+  {
+   "default": "1",
+   "fieldname": "capture_order",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Capture Order",
+   "reqd": 1
+  },
+  {
+   "description": "Unique input name; declared inputs are controlled by the Process.",
+   "fieldname": "process_argument",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Internal Input",
+   "read_only": 0
+  },
+  {
+   "fieldname": "allow_multiple_values",
+   "fieldtype": "Check",
+   "label": "Multiple Input",
+   "default": "0",
+   "in_list_view": 1,
+   "read_only": 0
+  },
+  {
+   "fieldname": "minimum_values",
+   "fieldtype": "Int",
+   "label": "Minimum Values",
+   "depends_on": "allow_multiple_values",
+   "non_negative": 1,
+   "description": "Zero uses the built-in bound; multiple inputs always require at least one value."
+  },
+  {
+   "fieldname": "maximum_values",
+   "fieldtype": "Int",
+   "label": "Maximum Values",
+   "depends_on": "allow_multiple_values",
+   "non_negative": 1,
+   "description": "Zero uses the built-in bound; multiple inputs always require at least one value."
+  },
+  {
+   "fieldname": "internal_type",
+   "fieldtype": "Data",
+   "label": "Internal Type",
+   "read_only": 1,
+   "in_list_view": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-20 19:45:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Flow Parameter",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

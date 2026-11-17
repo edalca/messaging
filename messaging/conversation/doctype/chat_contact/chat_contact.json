@@ -1,0 +1,196 @@
+{
+ "doctype": "DocType",
+ "name": "Chat Contact",
+ "module": "Conversation",
+ "autoname": "CTC-.######",
+ "engine": "InnoDB",
+ "field_order": [
+  "identity_tab",
+  "identity_key",
+  "channel",
+  "account",
+  "external_sender",
+  "column_break_identity",
+  "registration_status",
+  "active_session",
+  "last_activity",
+  "last_event_at",
+  "profile_tab",
+  "parameter_values",
+  "profile_values",
+  "preferences_section",
+  "preferred_language",
+  "language_confidence",
+  "column_break_preferences",
+  "quota_courtesy_cycle",
+  "profile_labels",
+  "registration_receipt"
+ ],
+ "fields": [
+  {
+   "fieldname": "identity_tab",
+   "fieldtype": "Tab Break",
+   "label": "Identity"
+  },
+  {
+   "fieldname": "identity_key",
+   "fieldtype": "Data",
+   "label": "Identity Key",
+   "unique": 1,
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Data",
+   "label": "Account",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "external_sender",
+   "fieldtype": "Data",
+   "label": "External Sender",
+   "reqd": 1,
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "registration_status",
+   "fieldtype": "Select",
+   "label": "Registration Status",
+   "options": "Pending\nComplete",
+   "default": "Pending",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "active_session",
+   "fieldtype": "Link",
+   "label": "Active Session",
+   "options": "Chat Session",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_activity",
+   "fieldtype": "Datetime",
+   "label": "Last Activity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_event_at",
+   "fieldtype": "Datetime",
+   "label": "Last Event At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "profile_tab",
+   "fieldtype": "Tab Break",
+   "label": "Profile"
+  },
+  {
+   "fieldname": "parameter_values",
+   "fieldtype": "Code",
+   "label": "Parameter Values",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "profile_values",
+   "fieldtype": "HTML",
+   "label": "Profile Values",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "preferences_section",
+   "fieldtype": "Section Break",
+   "label": "Language & Quotas"
+  },
+  {
+   "fieldname": "quota_courtesy_cycle",
+   "fieldtype": "Int",
+   "label": "Quota Courtesy Cycle",
+   "default": "0",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "preferred_language",
+   "fieldtype": "Link",
+   "label": "Preferred Language",
+   "options": "Language",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_preferences",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "language_confidence",
+   "fieldtype": "Float",
+   "label": "Language Confidence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "profile_labels",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Profile Labels",
+   "hidden": 1,
+   "read_only": 1,
+   "permlevel": 1
+  },
+  {
+   "fieldname": "registration_receipt",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Registration Receipt",
+   "hidden": 1,
+   "read_only": 1,
+   "permlevel": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "permlevel": 1,
+   "read": 1
+  },
+  {
+   "role": "Messaging Agent",
+   "read": 1
+  },
+  {
+   "role": "Messaging Agent",
+   "read": 1,
+   "permlevel": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "allow_rename": 0,
+ "actions": [],
+ "links": [],
+ "states": []
+}

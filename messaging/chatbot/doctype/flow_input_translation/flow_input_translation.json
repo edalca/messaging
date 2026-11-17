@@ -1,0 +1,44 @@
+{
+ "doctype": "DocType",
+ "name": "Flow Input Translation",
+ "module": "Chatbot",
+ "istable": 1,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "language",
+  "input_initial_message",
+  "input_continuation_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "input_initial_message",
+   "fieldtype": "Small Text",
+   "label": "Initial Input Message",
+   "in_list_view": 1,
+   "columns": 4,
+   "ignore_xss_filter": 1
+  },
+  {
+   "fieldname": "input_continuation_message",
+   "fieldtype": "Small Text",
+   "label": "Continuation Input Message",
+   "in_list_view": 1,
+   "columns": 4,
+   "ignore_xss_filter": 1
+  }
+ ],
+ "permissions": [],
+ "links": [],
+ "actions": [],
+ "states": []
+}

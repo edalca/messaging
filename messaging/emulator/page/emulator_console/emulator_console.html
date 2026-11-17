@@ -1,0 +1,44 @@
+<!-- jinja -->
+<div class="emulator-console">
+	<div class="emulator-state hidden" role="status"></div>
+	<div class="emulator-layout">
+		<aside class="emulator-sidebar">
+			<div class="emulator-sidebar-heading">
+				<strong class="emulator-list-title"></strong>
+				<button type="button" class="emulator-add btn btn-default btn-sm"></button>
+			</div>
+			<div class="emulator-search">
+				<input type="search" class="form-control" autocomplete="off">
+			</div>
+			<div class="emulator-folder-tabs btn-group btn-group-sm" role="tablist">
+				<button type="button" class="emulator-tab-chats btn btn-default active" data-folder="chats" role="tab" aria-selected="true"></button>
+				<button type="button" class="emulator-tab-archived btn btn-default" data-folder="archived" role="tab" aria-selected="false">
+					<span class="emulator-tab-archived-label"></span>
+					<span class="emulator-archived-badge hidden"></span>
+				</button>
+			</div>
+			<div class="emulator-contacts" aria-live="polite"></div>
+		</aside>
+		<section class="emulator-thread">
+			<div class="emulator-heading">
+				<button type="button" class="emulator-back btn btn-default btn-sm"></button>
+				<div class="emulator-contact-heading"></div>
+			</div>
+			<div class="emulator-paging hidden">
+				<button type="button" class="emulator-earlier btn btn-default btn-sm hidden"></button>
+				<button type="button" class="emulator-earlier-notifications btn btn-default btn-sm hidden"></button>
+			</div>
+			<div class="emulator-history" aria-live="polite" role="log"></div>
+			<div class="emulator-composer-area hidden">
+				<div class="emulator-compose-state hidden small text-muted" role="status"></div>
+				<div class="emulator-compose">
+					<textarea class="form-control" rows="1"></textarea>
+					<div class="emulator-compose-footer">
+						<span class="emulator-compose-hint"></span>
+						<button class="emulator-send btn btn-primary" type="button"></button>
+					</div>
+				</div>
+			</div>
+		</section>
+	</div>
+</div>

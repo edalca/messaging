@@ -1,0 +1,168 @@
+<div class="conversation-history" data-testid="conversation-history-root">
+	<div class="ch-shell">
+		<!-- Left Pane: Search, Filters & Historical Sessions List -->
+		<aside class="ch-pane ch-list-pane" data-testid="ch-list-pane" aria-label="{%= __("Conversations") %}">
+			<div class="ch-toolbar">
+				<div class="ch-search-row">
+					<div class="ch-search-box frappe-control" data-fieldtype="Data">
+						<div class="form-group">
+							<div class="control-input-wrapper">
+								<div class="control-input">
+									<div class="input-group ch-search-group">
+										<input
+											type="text"
+											class="input-with-feedback form-control input-xs ch-search-input"
+											data-testid="ch-search-input"
+											placeholder="{%= __("Search by contact, sender or session...") %}"
+											aria-label="{%= __("Search by contact, sender or session...") %}"
+											autocomplete="off"
+										/>
+										<div class="input-group-btn mr-0">
+											<button
+												type="button"
+												class="btn btn-default match-type-dropdown-btn"
+												data-toggle="dropdown"
+												aria-haspopup="true"
+												aria-expanded="false"
+												title="{%= __("Like") %}"
+											>
+												<span class="ch-search-match-icon"></span>
+											</button>
+											<ul class="dropdown-menu match-type-dropdown-menu dropdown-menu-right">
+												<li class="dropdown-item" data-match-type="=">{%= __("Equals") %}</li>
+												<li class="dropdown-item" data-match-type="like">{%= __("Like") %}</li>
+											</ul>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="filter-selector ch-filter-selector">
+						<div class="btn-group ch-filter-dropdown">
+							<button
+								type="button"
+								class="btn btn-default btn-sm filter-button btn-ch-filter"
+								data-testid="ch-filter-toggle"
+								aria-expanded="false"
+								title="{%= __("Filters") %}"
+							>
+								<span class="filter-icon button-icon"></span>
+								<span class="button-label hidden-xs">{%= __("Filters") %}</span>
+							</button>
+							<button
+								type="button"
+								class="btn btn-default btn-sm filter-x-button"
+								data-testid="ch-filter-clear"
+								title="{%= __("Clear all filters") %}"
+							>
+								<span class="filter-icon button-icon"></span>
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="ch-quick-row">
+					<div class="ch-quick-status-group btn-group" role="group" aria-label="{%= __("Status") %}">
+						<button type="button" class="btn btn-default btn-xs ch-quick-status-btn active" data-status="" data-testid="ch-quick-all">{%= __("All") %}</button>
+						<button type="button" class="btn btn-default btn-xs ch-quick-status-btn" data-status="Closed" data-testid="ch-quick-closed">{%= __("Closed") %}</button>
+						<button type="button" class="btn btn-default btn-xs ch-quick-status-btn" data-status="Expired" data-testid="ch-quick-expired">{%= __("Expired") %}</button>
+					</div>
+					<button
+						type="button"
+						class="btn btn-default btn-xs ch-mine-btn"
+						data-testid="ch-filter-mine"
+						aria-pressed="false"
+					>{%= __("My previous attentions") %}</button>
+				</div>
+
+				<div class="ch-filter-panel hidden" data-testid="ch-filter-panel">
+					<div class="ch-filter-grid">
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-date-from">{%= __("Date from") %}</label>
+							<input type="date" id="ch-filter-date-from" class="form-control input-xs ch-filter-control" data-filter="date_from" data-testid="ch-filter-date-from" />
+						</div>
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-date-to">{%= __("Date to") %}</label>
+							<input type="date" id="ch-filter-date-to" class="form-control input-xs ch-filter-control" data-filter="date_to" data-testid="ch-filter-date-to" />
+						</div>
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-channel">{%= __("Channel") %}</label>
+							<select id="ch-filter-channel" class="form-control input-xs ch-filter-control" data-filter="channel" data-testid="ch-filter-channel">
+								<option value="">{%= __("All Channels") %}</option>
+							</select>
+						</div>
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-account">{%= __("Account") %}</label>
+							<select id="ch-filter-account" class="form-control input-xs ch-filter-control" data-filter="account" data-testid="ch-filter-account">
+								<option value="">{%= __("All Accounts") %}</option>
+							</select>
+						</div>
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-attention-type">{%= __("Attention type") %}</label>
+							<select id="ch-filter-attention-type" class="form-control input-xs ch-filter-control" data-filter="attention_type" data-testid="ch-filter-attention-type">
+								<option value="">{%= __("All") %}</option>
+								<option value="Automatic">{%= __("Automatic attention") %}</option>
+								<option value="Human">{%= __("Human attention") %}</option>
+							</select>
+						</div>
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-status">{%= __("Status") %}</label>
+							<select id="ch-filter-status" class="form-control input-xs ch-filter-control" data-filter="status" data-testid="ch-filter-status">
+								<option value="">{%= __("All") %}</option>
+								<option value="Closed">{%= __("Closed") %}</option>
+								<option value="Expired">{%= __("Expired") %}</option>
+							</select>
+						</div>
+						<div class="ch-filter-field">
+							<label class="ch-filter-label" for="ch-filter-close-reason">{%= __("Close reason") %}</label>
+							<select id="ch-filter-close-reason" class="form-control input-xs ch-filter-control" data-filter="close_reason" data-testid="ch-filter-close-reason">
+								<option value="">{%= __("All") %}</option>
+								<option value="Manual">{%= __("Manual") %}</option>
+								<option value="Inactivity">{%= __("Inactivity") %}</option>
+								<option value="Technical Error">{%= __("Technical Error") %}</option>
+							</select>
+						</div>
+						<div class="ch-filter-field ch-agent-filter-field">
+							<label class="ch-filter-label" for="ch-filter-agent">{%= __("Agent") %}</label>
+							<select id="ch-filter-agent" class="form-control input-xs ch-filter-control" data-filter="agent" data-testid="ch-filter-agent">
+								<option value="">{%= __("All Agents") %}</option>
+							</select>
+						</div>
+					</div>
+				</div>
+
+				<div class="ch-active-filter-bar hidden" data-testid="ch-active-filter-bar"></div>
+			</div>
+
+			<div class="ch-list-body" data-testid="ch-conversation-list" role="list">
+				<div class="ch-empty-list">{%= __("Loading historical conversations...") %}</div>
+			</div>
+		</aside>
+
+		<!-- Center Pane: Read-Only Message History -->
+		<main class="ch-pane ch-chat-pane" data-testid="ch-chat-pane" aria-label="{%= __("Message history") %}">
+			<div class="ch-chat-empty" data-testid="ch-chat-empty">
+				<div class="ch-empty-icon"></div>
+				<div class="ch-empty-title" data-testid="ch-chat-empty-title">{%= __("Select a historical conversation") %}</div>
+				<div class="ch-empty-desc" data-testid="ch-chat-empty-desc">{%= __("Choose a session from the left list to read its messages and events.") %}</div>
+			</div>
+			<div class="ch-chat-active hidden" data-testid="ch-chat-active">
+				<header class="ch-chat-head" data-testid="ch-chat-head"></header>
+				<div class="ch-readonly-banner hidden" data-testid="ch-readonly-banner"></div>
+				<div class="ch-timeline" data-testid="ch-timeline" role="log" aria-live="polite"></div>
+			</div>
+		</main>
+
+		<!-- Right Pane: Session & Finalization Details -->
+		<aside class="ch-pane ch-info-pane" data-testid="ch-info-pane" aria-label="{%= __("Details") %}">
+			<div class="ch-info-header">
+				<h5 class="m-0 font-weight-bold">{%= __("Details") %}</h5>
+			</div>
+			<div class="ch-info-empty" data-testid="ch-info-empty">
+				<div class="ch-empty-desc">{%= __("Select a historical conversation to inspect its contact, session and finalization details.") %}</div>
+			</div>
+			<div class="ch-info-body hidden" data-testid="ch-info-body"></div>
+		</aside>
+	</div>
+</div>

@@ -1,0 +1,25 @@
+{
+ "doctype": "DocType",
+ "name": "Flow Consumer State",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "field_order": [
+  "state"
+ ],
+ "fields": [
+  {
+   "fieldname": "state",
+   "fieldtype": "Link",
+   "options": "Bot Flow State",
+   "label": "Functional State",
+   "reqd": 1,
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [],
+ "actions": [],
+ "links": [],
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

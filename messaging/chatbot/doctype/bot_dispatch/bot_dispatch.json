@@ -1,0 +1,267 @@
+{
+ "doctype": "DocType",
+ "name": "Bot Dispatch",
+ "module": "Chatbot",
+ "autoname": "DSP-.######",
+ "naming_rule": "Expression",
+ "title_field": "contact",
+ "search_fields": "contact,session,turn,status,message_type",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "outbound_key",
+  "contact",
+  "session",
+  "turn",
+  "message",
+  "column_break_general",
+  "channel",
+  "account",
+  "message_type",
+  "status",
+  "delivery_status",
+  "agent",
+  "content_section",
+  "content",
+  "quota_tab",
+  "quota_kind",
+  "courtesy_cycle",
+  "functional_result",
+  "max_text_length",
+  "diagnostic_code",
+  "column_break_quota",
+  "reserved_at",
+  "review_after",
+  "accepted_at",
+  "resolved_at",
+  "delivered_at",
+  "read_at",
+  "transport_section",
+  "transport_reference",
+  "menu_options"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "outbound_key",
+   "fieldtype": "Data",
+   "label": "Outbound Key",
+   "unique": 1,
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Chat Contact",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "label": "Session",
+   "options": "Chat Session",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "turn",
+   "fieldtype": "Link",
+   "label": "Turn",
+   "options": "Chat Turn",
+   "reqd": 0,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Data",
+   "label": "Account",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "message_type",
+   "fieldtype": "Select",
+   "label": "Message Type",
+   "options": "Automatic\nHuman",
+   "default": "Automatic",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Reserved\nPrepared\nHeld\nSending\nAccepted\nRejected\nUnknown",
+   "default": "Reserved",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Content"
+  },
+  {
+   "fieldname": "content",
+   "fieldtype": "Long Text",
+   "label": "Content",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "quota_tab",
+   "fieldtype": "Tab Break",
+   "label": "Quota Reservation"
+  },
+  {
+   "fieldname": "quota_kind",
+   "fieldtype": "Select",
+   "label": "Quota Kind",
+   "options": "Standard\nRegistration\nCourtesy\nUnmetered\nHuman",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "courtesy_cycle",
+   "fieldtype": "Int",
+   "label": "Courtesy Cycle",
+   "default": "0",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_quota",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reserved_at",
+   "fieldtype": "Datetime",
+   "label": "Reserved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_after",
+   "fieldtype": "Datetime",
+   "label": "Review After",
+   "read_only": 1
+  },
+  {
+   "fieldname": "accepted_at",
+   "fieldtype": "Datetime",
+   "label": "Accepted At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "resolved_at",
+   "fieldtype": "Datetime",
+   "label": "Resolved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "functional_result",
+   "fieldtype": "Check",
+   "label": "Functional Result",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transport_section",
+   "fieldtype": "Section Break",
+   "label": "Transport & Menu Metadata"
+  },
+  {
+   "fieldname": "transport_reference",
+   "fieldtype": "Data",
+   "label": "Transport Reference",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_text_length",
+   "fieldtype": "Int",
+   "label": "Max Text Length",
+   "read_only": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Link",
+   "label": "Chat Message",
+   "options": "Chat Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent",
+   "fieldtype": "Link",
+   "label": "Agent",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_status",
+   "fieldtype": "Select",
+   "label": "Delivery Status",
+   "options": "\nPending\nSent\nDelivered\nRead\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivered_at",
+   "fieldtype": "Datetime",
+   "label": "Delivered At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "read_at",
+   "fieldtype": "Datetime",
+   "label": "Read At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic_code",
+   "fieldtype": "Data",
+   "label": "Diagnostic Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "menu_options",
+   "fieldtype": "Code",
+   "label": "Issued Menu Options",
+   "options": "JSON",
+   "read_only": 1,
+   "permlevel": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "permlevel": 1,
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0,
+ "allow_rename": 0,
+ "actions": [],
+ "links": [],
+ "states": []
+}

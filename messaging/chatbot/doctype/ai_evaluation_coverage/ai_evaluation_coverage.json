@@ -1,0 +1,60 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Coverage",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "field_order": [
+  "language",
+  "group",
+  "sample_count",
+  "required",
+  "minimum_parameters"
+ ],
+ "fields": [
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "Language",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "group",
+   "fieldtype": "Data",
+   "label": "Evaluation Group",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "sample_count",
+   "fieldtype": "Int",
+   "label": "Sample Count",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "required",
+   "fieldtype": "Check",
+   "label": "Required",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "minimum_parameters",
+   "fieldtype": "Int",
+   "label": "Minimum Parameters",
+   "default": "1",
+   "description": "Extraction scenarios must contain at least this many parameters. Use 2 or more to require combined scenarios.",
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "istable": 1
+}

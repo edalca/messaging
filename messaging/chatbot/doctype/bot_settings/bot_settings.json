@@ -1,0 +1,458 @@
+{
+ "actions": [],
+ "creation": "2026-11-04 09:08:06.835539",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "section_general",
+  "chatbot_languages",
+  "section_artificial_intelligence",
+  "interpretation_enabled",
+  "active_ai_configuration",
+  "section_informative",
+  "informative_show_available_categories",
+  "informative_message_cards",
+  "informative_messages_column",
+  "informative_categories_header_card",
+  "capture_attempts_section",
+  "max_invalid_attempts",
+  "show_menu_on_attempts_exhausted",
+  "column_break_dubk",
+  "attempts_exhausted_message_card",
+  "section_courtesy",
+  "general_message_cards",
+  "column_break_tpnt",
+  "quota_courtesy_message_card",
+  "registration_tab",
+  "section_registration",
+  "registration_enabled",
+  "column_break_lkio",
+  "exempt_registration_from_quotas",
+  "max_registration_exempt_messages",
+  "registration_flow_section",
+  "registration_flow",
+  "registration_states",
+  "registration_fields_section",
+  "registration_fields",
+  "greeting_tab",
+  "section_greeting",
+  "greeting_enabled",
+  "column_break_greeting",
+  "show_menu_on_greeting_only",
+  "greeting_flow_section",
+  "greeting_flow",
+  "greeting_states",
+  "human_support_tab",
+  "section_human_attention",
+  "human_attention_enabled",
+  "human_operations_column",
+  "human_inactivity_minutes",
+  "human_flow_section",
+  "human_flow",
+  "human_transfer_states",
+  "human_fields_section",
+  "human_fields",
+  "human_requests_required",
+  "human_schedule_section",
+  "human_support_week",
+  "human_messages_section",
+  "human_message_cards",
+  "human_messages_column",
+  "human_active_message_card",
+  "human_completed_message_card",
+  "message_translations"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "section_general",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "chatbot_languages",
+   "fieldtype": "Table",
+   "label": "Chatbot Languages",
+   "options": "Bot Language"
+  },
+  {
+   "fieldname": "section_artificial_intelligence",
+   "fieldtype": "Section Break",
+   "label": "Artificial Intelligence"
+  },
+  {
+   "default": "0",
+   "fieldname": "interpretation_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Natural Language Interpretation",
+   "permlevel": 1
+  },
+  {
+   "depends_on": "eval:doc.interpretation_enabled",
+   "description": "Only a successfully validated configuration can be selected. No automatic fallback.",
+   "fieldname": "active_ai_configuration",
+   "fieldtype": "Link",
+   "label": "Active AI Configuration",
+   "options": "AI Configuration"
+  },
+  {
+   "fieldname": "section_informative",
+   "fieldtype": "Section Break",
+   "label": "Informative Configuration"
+  },
+  {
+   "default": "0",
+   "description": "Append the shared category menu after the informative message.",
+   "fieldname": "informative_show_available_categories",
+   "fieldtype": "Check",
+   "label": "Show Available Categories in Informative Message"
+  },
+  {
+   "fieldname": "informative_message_cards",
+   "fieldtype": "HTML",
+   "label": "Informative Message"
+  },
+  {
+   "fieldname": "informative_messages_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "informative_categories_header_card",
+   "fieldtype": "HTML",
+   "label": "Category Menu Header"
+  },
+  {
+   "fieldname": "capture_attempts_section",
+   "fieldtype": "Section Break",
+   "label": "Capture Attempt Control"
+  },
+  {
+   "fieldname": "max_invalid_attempts",
+   "fieldtype": "Int",
+   "label": "Maximum Invalid Attempts per Flow"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_menu_on_attempts_exhausted",
+   "fieldtype": "Check",
+   "label": "Show Menu on Exhausted Attempts"
+  },
+  {
+   "fieldname": "attempts_exhausted_message_card",
+   "fieldtype": "HTML",
+   "label": "Attempts Exhausted Message"
+  },
+  {
+   "fieldname": "section_courtesy",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "quota_courtesy_message_card",
+   "fieldtype": "HTML",
+   "label": "Quota Courtesy Message"
+  },
+  {
+   "fieldname": "general_message_cards",
+   "fieldtype": "HTML",
+   "label": "Default Safe Internal Error Message"
+  },
+  {
+   "fieldname": "registration_tab",
+   "fieldtype": "Tab Break",
+   "label": "Registration"
+  },
+  {
+   "fieldname": "section_registration",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "0",
+   "description": "Enable mandatory registration managed by Messaging before handling Flows.",
+   "fieldname": "registration_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Mandatory Registration"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "column_break_lkio",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "exempt_registration_from_quotas",
+   "fieldtype": "Check",
+   "label": "Exempt Registration Prompts from Quotas"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled && doc.exempt_registration_from_quotas",
+   "fieldname": "max_registration_exempt_messages",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Max Registration Exempt Messages",
+   "mandatory_depends_on": "eval:doc.registration_enabled && doc.exempt_registration_from_quotas"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "registration_flow_section",
+   "fieldtype": "Section Break",
+   "label": "Registration Flow Configuration"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "registration_flow",
+   "fieldtype": "Link",
+   "label": "Bot Flow",
+   "mandatory_depends_on": "eval:doc.registration_enabled",
+   "options": "Bot Flow"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "registration_states",
+   "fieldtype": "Table MultiSelect",
+   "label": "Functional States That Complete Registration",
+   "mandatory_depends_on": "eval:doc.registration_enabled",
+   "options": "Flow Consumer State"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "registration_fields_section",
+   "fieldtype": "Section Break",
+   "label": "Output Fields for Registration"
+  },
+  {
+   "depends_on": "eval:doc.registration_enabled",
+   "fieldname": "registration_fields",
+   "fieldtype": "Table",
+   "label": "Output Fields for Registration",
+   "options": "Registration Field"
+  },
+  {
+   "fieldname": "greeting_tab",
+   "fieldtype": "Tab Break",
+   "label": "Greeting"
+  },
+  {
+   "fieldname": "section_greeting",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "greeting_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Greeting"
+  },
+  {
+   "depends_on": "eval:doc.greeting_enabled",
+   "fieldname": "column_break_greeting",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.greeting_enabled",
+   "description": "After the greeting Bot Flow responds, show the category menu only when that greeting is the only recognized intention.",
+   "fieldname": "show_menu_on_greeting_only",
+   "fieldtype": "Check",
+   "label": "Show Menu When User Only Greets"
+  },
+  {
+   "depends_on": "eval:doc.greeting_enabled",
+   "fieldname": "greeting_flow_section",
+   "fieldtype": "Section Break",
+   "label": "Greeting Flow Configuration"
+  },
+  {
+   "depends_on": "eval:doc.greeting_enabled",
+   "fieldname": "greeting_flow",
+   "fieldtype": "Link",
+   "label": "Bot Flow",
+   "mandatory_depends_on": "eval:doc.greeting_enabled",
+   "options": "Bot Flow"
+  },
+  {
+   "depends_on": "eval:doc.greeting_enabled",
+   "fieldname": "greeting_states",
+   "fieldtype": "Table MultiSelect",
+   "label": "Functional States That Complete Greeting",
+   "mandatory_depends_on": "eval:doc.greeting_enabled",
+   "options": "Flow Consumer State"
+  },
+  {
+   "fieldname": "human_support_tab",
+   "fieldtype": "Tab Break",
+   "label": "Human Support"
+  },
+  {
+   "fieldname": "section_human_attention",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "human_attention_enabled",
+   "fieldtype": "Check",
+   "label": "Human Support Enabled"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_operations_column",
+   "fieldtype": "Column Break",
+   "label": "Human Support Operations"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_inactivity_minutes",
+   "fieldtype": "Int",
+   "label": "Human Inactivity Timeout (Minutes)",
+   "mandatory_depends_on": "eval:doc.human_attention_enabled"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_flow_section",
+   "fieldtype": "Section Break",
+   "label": "Human Support Flow Configuration"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_flow",
+   "fieldtype": "Link",
+   "label": "Bot Flow",
+   "mandatory_depends_on": "eval:doc.human_attention_enabled",
+   "options": "Bot Flow"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_transfer_states",
+   "fieldtype": "Table MultiSelect",
+   "label": "Functional States That Allow Transfer",
+   "mandatory_depends_on": "eval:doc.human_attention_enabled",
+   "options": "Flow Consumer State"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_fields_section",
+   "fieldtype": "Section Break",
+   "label": "Output Fields to Retain"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled",
+   "fieldname": "human_fields",
+   "fieldtype": "Table",
+   "label": "Output Fields to Retain",
+   "options": "Human Request Field"
+  },
+  {
+   "fieldname": "human_requests_required",
+   "fieldtype": "Int",
+   "label": "Human Requests Required",
+   "default": "1",
+   "non_negative": 1,
+   "depends_on": "eval:doc.human_attention_enabled",
+   "mandatory_depends_on": "eval:doc.human_attention_enabled",
+   "description": "Number of times a contact must request human support before they can be transferred to an agent."
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled && doc.human_flow === 'messaging_human_availability'",
+   "fieldname": "human_schedule_section",
+   "fieldtype": "Section Break",
+   "label": "Support Schedule"
+  },
+  {
+   "depends_on": "eval:doc.human_attention_enabled && doc.human_flow === 'messaging_human_availability'",
+   "description": "One interval per day in the site time zone. Closed days do not require times.",
+   "fieldname": "human_support_week",
+   "fieldtype": "Table",
+   "label": "Weekly Support Schedule",
+   "mandatory_depends_on": "eval:doc.human_attention_enabled && doc.human_flow === 'messaging_human_availability'",
+   "options": "Human Support Day"
+  },
+  {
+   "fieldname": "human_messages_section",
+   "fieldtype": "Section Break",
+   "label": "Messages by Language"
+  },
+  {
+   "fieldname": "human_message_cards",
+   "fieldtype": "HTML",
+   "label": "Message When Human Support is Disabled"
+  },
+  {
+   "fieldname": "human_messages_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "human_active_message_card",
+   "fieldtype": "HTML",
+   "label": "Human Support Assigned Message",
+   "depends_on": "eval:doc.human_attention_enabled"
+  },
+  {
+   "fieldname": "human_completed_message_card",
+   "fieldtype": "HTML",
+   "label": "Human Support Completed Message",
+   "depends_on": "eval:doc.human_attention_enabled"
+  },
+  {
+   "fieldname": "message_translations",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Message Translations",
+   "options": "Bot Settings Translation"
+  },
+  {
+   "fieldname": "column_break_tpnt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_dubk",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-06 23:40:58.518221",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Bot Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Workspace Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Workspace Manager"
+  },
+  {
+   "read": 1,
+   "role": "Messaging Automation"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,123 @@
+{
+ "doctype": "DocType",
+ "name": "AI Evaluation Parameter",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "ref",
+   "fieldtype": "Data",
+   "label": "Ref",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "label": "Label",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "parameter_type",
+   "fieldtype": "Select",
+   "label": "Parameter Type",
+   "options": "String\nInt\nDate\nName\nExpression",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "string_mode",
+   "fieldtype": "Select",
+   "label": "String Mode",
+   "options": "\nText\nSingle Word",
+   "depends_on": "eval:doc.parameter_type==='String'"
+  },
+  {
+   "fieldname": "min_length",
+   "fieldtype": "Int",
+   "label": "Min Length",
+   "depends_on": "eval:['String','Name'].includes(doc.parameter_type)"
+  },
+  {
+   "fieldname": "max_length",
+   "fieldtype": "Int",
+   "label": "Max Length",
+   "depends_on": "eval:['String','Name'].includes(doc.parameter_type)"
+  },
+  {
+   "fieldname": "has_min_value",
+   "fieldtype": "Check",
+   "label": "Has Min Value",
+   "depends_on": "eval:doc.parameter_type==='Int'"
+  },
+  {
+   "fieldname": "min_value",
+   "fieldtype": "Int",
+   "label": "Min Value",
+   "depends_on": "eval:doc.parameter_type==='Int' && doc.has_min_value"
+  },
+  {
+   "fieldname": "has_max_value",
+   "fieldtype": "Check",
+   "label": "Has Max Value",
+   "depends_on": "eval:doc.parameter_type==='Int'"
+  },
+  {
+   "fieldname": "max_value",
+   "fieldtype": "Int",
+   "label": "Max Value",
+   "depends_on": "eval:doc.parameter_type==='Int' && doc.has_max_value"
+  },
+  {
+   "fieldname": "allow_contextual_name_extraction",
+   "fieldtype": "Check",
+   "label": "Allow Contextual Name Extraction",
+   "depends_on": "eval:doc.parameter_type==='Name'"
+  },
+  {
+   "fieldname": "expression",
+   "fieldtype": "Small Text",
+   "label": "Expression",
+   "depends_on": "eval:doc.parameter_type==='Expression'",
+   "description": "One expression per line: # ASCII digit, @ ASCII letter; letters, digits and hyphens are literals. Escape #, @ and backslash with backslash."
+  },
+  {
+   "fieldname": "allow_multiple_values",
+   "fieldtype": "Check",
+   "label": "Allow Multiple Values"
+  },
+  {
+   "fieldname": "minimum_values",
+   "fieldtype": "Int",
+   "label": "Minimum Values",
+   "depends_on": "eval:doc.allow_multiple_values"
+  },
+  {
+   "fieldname": "maximum_values",
+   "fieldtype": "Int",
+   "label": "Maximum Values",
+   "depends_on": "eval:doc.allow_multiple_values"
+  }
+ ],
+ "field_order": [
+  "ref",
+  "label",
+  "parameter_type",
+  "string_mode",
+  "min_length",
+  "max_length",
+  "has_min_value",
+  "min_value",
+  "has_max_value",
+  "max_value",
+  "allow_contextual_name_extraction",
+  "expression",
+  "allow_multiple_values",
+  "minimum_values",
+  "maximum_values"
+ ],
+ "istable": 1,
+ "permissions": [],
+ "track_changes": 0,
+ "allow_rename": 0
+}

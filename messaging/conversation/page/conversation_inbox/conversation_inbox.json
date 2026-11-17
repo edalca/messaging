@@ -1,0 +1,10 @@
+{
+ "doctype": "Page",
+ "name": "conversation-inbox",
+ "page_name": "conversation-inbox",
+ "title": "Conversation Inbox",
+ "module": "Conversation",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [{"role": "System Manager"}, {"role": "Messaging Agent"}]
+}

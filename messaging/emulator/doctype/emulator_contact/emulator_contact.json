@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "autoname": "field:sender_id",
+ "creation": "2026-10-22 22:55:40.515003",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sender_id",
+  "display_name",
+  "enabled"
+ ],
+ "fields": [
+  {
+   "description": "Generated fictitious number outside the international numbering format.",
+   "fieldname": "sender_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Emulated Number",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "description": "Leave blank to generate a fictitious contact name.",
+   "fieldname": "display_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Contact Name"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-26 10:08:51.680119",
+ "modified_by": "Administrator",
+ "module": "Emulator",
+ "name": "Emulator Contact",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "row_format": "Dynamic",
+ "search_fields": "sender_id,display_name",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "display_name"
+}

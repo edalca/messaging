@@ -1,0 +1,40 @@
+{
+ "app": "messaging",
+ "creation": "2026-10-20 19:28:00",
+ "docstatus": 0,
+ "doctype": "Dock",
+ "idx": 0,
+ "items": [
+  {
+   "added": 1,
+   "hidden": 0,
+   "icon": "conversation-chat-duotone",
+   "link_to": "Conversation",
+   "link_type": "Sidebar",
+   "title": "Conversation"
+  },
+  {
+   "added": 1,
+   "hidden": 0,
+   "icon": "chatbot-bot-duotone",
+   "link_to": "Chatbot",
+   "link_type": "Sidebar",
+   "title": "Chatbot"
+  },
+  {
+   "added": 1,
+   "hidden": 0,
+   "icon": "communication-envelope-duotone",
+   "link_to": "Communication",
+   "link_type": "Sidebar",
+   "title": "Communication"
+  }
+ ],
+ "modified": "2026-10-21 11:29:40.627517",
+ "modified_by": "Administrator",
+ "mount_on": "",
+ "name": "messaging",
+ "owner": "Administrator",
+ "standard": 1,
+ "user": ""
+}

@@ -1,0 +1,368 @@
+{
+ "actions": [],
+ "autoname": "NRL-.#####",
+ "creation": "2026-10-28 21:22:02.485167",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "section_break_information",
+  "rule_name",
+  "source_application",
+  "source_doctype",
+  "column_break_ajho",
+  "notification_delay_minutes",
+  "enabled",
+  "events_section",
+  "events",
+  "delivery_section",
+  "account",
+  "channel_context",
+  "provider_context",
+  "redirect_recipient",
+  "delivery_information",
+  "section_break_jdcn",
+  "parameter_controls",
+  "parameters",
+  "column_break_niku",
+  "process_flow_tab",
+  "section_break_process",
+  "process_definition",
+  "process_test_status",
+  "process_test_checked_by",
+  "process_test_fingerprint",
+  "column_break_fckh",
+  "process_method",
+  "process_invocation_mode",
+  "process_test_checked_at",
+  "process_test_log",
+  "section_break_parameters",
+  "process_parameters",
+  "section_break_outputs",
+  "outputs",
+  "process_test_evidence",
+  "process_contract",
+  "section_break_provenance",
+  "application",
+  "registered_hash",
+  "column_break_provenance",
+  "registered_snapshot"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "section_break_information",
+   "fieldtype": "Section Break",
+   "label": "Rule Information"
+  },
+  {
+   "fieldname": "rule_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Rule Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_application",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source Application",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Source DocType",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_ajho",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "60",
+   "description": "Waiting time before dispatching new notifications from this rule. Schedules of already prepared notifications are not changed.",
+   "fieldname": "notification_delay_minutes",
+   "fieldtype": "Int",
+   "label": "Notification Delay (minutes)",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "events_section",
+   "fieldtype": "Section Break",
+   "label": "Events"
+  },
+  {
+   "fieldname": "events",
+   "fieldtype": "Table",
+   "label": "Events",
+   "options": "Notification Rule Event",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delivery_section",
+   "fieldtype": "Section Break",
+   "label": "Delivery"
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "label": "Communication Channel Account",
+   "mandatory_depends_on": "eval:doc.enabled",
+   "options": "Communication Channel Account"
+  },
+  {
+   "fieldname": "channel_context",
+   "fieldtype": "Data",
+   "label": "Channel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_context",
+   "fieldtype": "Data",
+   "label": "Provider",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "redirect_recipient",
+   "fieldtype": "Check",
+   "label": "Use Test Recipient"
+  },
+  {
+   "fieldname": "delivery_information",
+   "fieldtype": "HTML",
+   "label": "Delivery Information"
+  },
+  {
+   "fieldname": "column_break_niku",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "process_flow_tab",
+   "fieldtype": "Tab Break",
+   "label": "Process Flow"
+  },
+  {
+   "fieldname": "section_break_process",
+   "fieldtype": "Section Break",
+   "label": "Process Configuration"
+  },
+  {
+   "fieldname": "process_definition",
+   "fieldtype": "Link",
+   "label": "Process Definition",
+   "options": "Process Definition",
+   "reqd": 1
+  },
+  {
+   "default": "Internal Call (frappe.call)",
+   "fieldname": "process_invocation_mode",
+   "fieldtype": "Select",
+   "label": "Invocation Mode",
+   "options": "Internal Call (frappe.call)",
+   "read_only": 1,
+   "reqd": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "process_method",
+   "fieldtype": "Data",
+   "label": "Process Method Path",
+   "mandatory_depends_on": "eval:doc.enabled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_contract",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Declared Process Contract",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_parameters",
+   "fieldtype": "Section Break",
+   "label": "Input Parameters"
+  },
+  {
+   "fieldname": "process_parameters",
+   "fieldtype": "Table",
+   "label": "Internal Inputs",
+   "options": "Notification Process Parameter"
+  },
+  {
+   "fieldname": "section_break_outputs",
+   "fieldtype": "Section Break",
+   "label": "Functional Outputs"
+  },
+  {
+   "fieldname": "outputs",
+   "fieldtype": "Table",
+   "label": "Outputs",
+   "options": "Notification Outcome"
+  },
+  {
+   "fieldname": "section_break_jdcn",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "parameter_controls",
+   "fieldtype": "HTML",
+   "label": "Provider Parameters"
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Provider Values",
+   "options": "Communication Provider Value"
+  },
+  {
+   "default": "Untested",
+   "fieldname": "process_test_status",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Process Test Status",
+   "no_copy": 1,
+   "options": "Untested\nPassed\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Test Configuration Fingerprint",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_log",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Process Test Log",
+   "no_copy": 1,
+   "options": "Process Execution Log",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_checked_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Last Process Test",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_checked_by",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Tested By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_test_evidence",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Process Condition Evidence",
+   "no_copy": 1,
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application",
+   "no_copy": 1,
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "column_break_fckh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.application || doc.registered_hash",
+   "fieldname": "section_break_provenance",
+   "fieldtype": "Section Break",
+   "label": "Registration Provenance"
+  },
+  {
+   "fieldname": "registered_hash",
+   "fieldtype": "Data",
+   "label": "Registered Configuration Hash",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_provenance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "registered_snapshot",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Registered Configuration Snapshot",
+   "read_only": 1,
+   "no_copy": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-08 23:42:20.454052",
+ "modified_by": "Administrator",
+ "module": "Communication",
+ "name": "Notification Rule",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "rule_name,source_doctype",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Yellow",
+   "title": "Untested"
+  },
+  {
+   "color": "Red",
+   "title": "Disabled"
+  },
+  {
+   "color": "Green",
+   "title": "Enabled"
+  },
+  {
+   "color": "Gray",
+   "title": "Unavailable"
+  }
+ ],
+ "title_field": "rule_name"
+}

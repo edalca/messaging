@@ -1,0 +1,147 @@
+{
+ "doctype": "DocType",
+ "name": "Process Definition",
+ "module": "Communication",
+ "autoname": "field:process_id",
+ "naming_rule": "By fieldname",
+ "engine": "InnoDB",
+ "field_order": [
+  "process_id",
+  "process_name",
+  "process_type",
+  "application",
+  "column_break_identity",
+  "status",
+  "contract_version",
+  "definition_method",
+  "method",
+  "revisions_section",
+  "capability_revision",
+  "contract_revision",
+  "registered_contract",
+  "registered_snapshot"
+ ],
+ "fields": [
+  {
+   "fieldname": "process_id",
+   "label": "Process ID",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "process_name",
+   "label": "Process Name",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "process_type",
+   "label": "Process Type",
+   "fieldtype": "Select",
+   "read_only": 1,
+   "reqd": 1,
+   "options": "bot_flow\nnotification",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "application",
+   "label": "Application",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "definition_method",
+   "label": "Definition",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "length": 255
+  },
+  {
+   "fieldname": "method",
+   "label": "Handler",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "reqd": 1,
+   "length": 255
+  },
+  {
+   "fieldname": "status",
+   "label": "Status",
+   "fieldtype": "Select",
+   "options": "Enabled\nUnavailable",
+   "read_only": 1,
+   "reqd": 1,
+   "default": "Unavailable",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "contract_version",
+   "label": "Definition Contract Version",
+   "fieldtype": "Int",
+   "read_only": 1,
+   "reqd": 1,
+   "default": "1"
+  },
+  {
+   "fieldname": "capability_revision",
+   "label": "Capability Revision",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "length": 64
+  },
+  {
+   "fieldname": "contract_revision",
+   "label": "Structural Contract Revision",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "length": 64
+  },
+  {
+   "fieldname": "registered_contract",
+   "label": "Registered Process Contract",
+   "fieldtype": "Code",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "registered_snapshot",
+   "label": "Registered Code Revision",
+   "fieldtype": "Code",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "revisions_section",
+   "fieldtype": "Section Break",
+   "label": "Registered Contract & Revisions",
+   "collapsible": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1
+  }
+ ],
+ "title_field": "process_name",
+ "search_fields": "process_name,application,process_type",
+ "sort_field": "process_name",
+ "sort_order": "ASC",
+ "allow_rename": 0,
+ "track_changes": 0,
+ "links": [],
+ "actions": [],
+ "states": []
+}

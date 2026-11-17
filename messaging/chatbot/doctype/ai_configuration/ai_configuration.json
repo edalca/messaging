@@ -1,0 +1,155 @@
+{
+ "doctype": "DocType",
+ "name": "AI Configuration",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "field_order": [
+  "configuration_name",
+  "profile_type",
+  "provider",
+  "enabled",
+  "column_break_profile",
+  "validation_status",
+  "last_checked",
+  "diagnostic",
+  "parameters_section",
+  "parameter_controls",
+  "parameters",
+  "validated_hash",
+  "attempted_hash",
+  "evaluation_generation",
+  "evaluation_basis",
+  "evaluation_section",
+  "evaluation_panel"
+ ],
+ "fields": [
+  {
+   "fieldname": "configuration_name",
+   "fieldtype": "Data",
+   "label": "Configuration Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "profile_type",
+   "fieldtype": "Select",
+   "label": "Profile Purpose",
+   "options": "Decision\nParameter Extraction",
+   "default": "Decision",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Parameter Extraction profiles are configuration only. No extraction executor is available."
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "label": "Provider",
+   "options": "AI Provider",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "0",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "parameter_controls",
+   "fieldtype": "HTML",
+   "label": "Parameter Controls"
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "Table",
+   "label": "Parameters",
+   "options": "AI Configuration Value",
+   "hidden": 1
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Data",
+   "label": "Validation Status",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "last_checked",
+   "fieldtype": "Datetime",
+   "label": "Last Checked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic",
+   "fieldtype": "Small Text",
+   "label": "Diagnostic",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validated_hash",
+   "fieldtype": "Data",
+   "label": "Validated Hash",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "attempted_hash",
+   "fieldtype": "Data",
+   "label": "Attempted Hash",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "evaluation_generation",
+   "fieldtype": "Data",
+   "label": "Evaluation Generation",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "evaluation_basis",
+   "fieldtype": "Data",
+   "label": "Evaluation Basis",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "evaluation_panel",
+   "fieldtype": "HTML",
+   "label": "Functional Evaluation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_profile",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "parameters_section",
+   "fieldtype": "Section Break",
+   "label": "Provider Parameters"
+  },
+  {
+   "fieldname": "evaluation_section",
+   "fieldtype": "Section Break",
+   "label": "Functional Evaluation",
+   "depends_on": "eval:!doc.__islocal && doc.profile_type === 'Decision'"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "select": 1
+  }
+ ],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "autoname": "field:configuration_name",
+ "title_field": "configuration_name"
+}

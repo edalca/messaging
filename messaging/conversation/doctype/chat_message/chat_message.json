@@ -1,0 +1,171 @@
+{
+ "doctype": "DocType",
+ "name": "Chat Message",
+ "module": "Conversation",
+ "autoname": "MSG-.######",
+ "engine": "InnoDB",
+ "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "message_key",
+   "fieldtype": "Data",
+   "label": "Message Key",
+   "unique": 1,
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "label": "Session",
+   "options": "Chat Session",
+   "reqd": 0,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Chat Contact",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Message Kind",
+   "options": "Incoming\nAutomatic\nHuman\nEvent",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sent_at",
+   "fieldtype": "Datetime",
+   "label": "Sent At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "event_at",
+   "fieldtype": "Datetime",
+   "label": "Event At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent",
+   "fieldtype": "Link",
+   "label": "Agent",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turn",
+   "fieldtype": "Link",
+   "label": "Chat Turn",
+   "options": "Chat Turn",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dispatch",
+   "fieldtype": "Link",
+   "label": "Dispatch",
+   "options": "Bot Dispatch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Message Content"
+  },
+  {
+   "fieldname": "content",
+   "fieldtype": "Long Text",
+   "label": "Content",
+   "read_only": 1
+  },
+  {
+   "fieldname": "channel_metadata_section",
+   "fieldtype": "Section Break",
+   "label": "Channel Metadata"
+  },
+  {
+   "fieldname": "external_id",
+   "fieldtype": "Data",
+   "label": "External Message ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reply_reference",
+   "fieldtype": "Data",
+   "label": "Reply Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_metadata",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_type",
+   "fieldtype": "Data",
+   "label": "Source Message Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "selection_id",
+   "fieldtype": "Data",
+   "label": "Selection ID",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "general_tab",
+  "message_key",
+  "session",
+  "contact",
+  "turn",
+  "dispatch",
+  "column_break_general",
+  "sequence",
+  "kind",
+  "agent",
+  "sent_at",
+  "event_at",
+  "content_section",
+  "content",
+  "channel_metadata_section",
+  "external_id",
+  "reply_reference",
+  "column_break_metadata",
+  "source_type",
+  "selection_id"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  },
+  {
+   "role": "Messaging Agent",
+   "read": 1
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "allow_rename": 0
+}

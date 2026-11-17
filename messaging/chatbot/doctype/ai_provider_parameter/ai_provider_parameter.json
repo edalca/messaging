@@ -1,0 +1,95 @@
+{
+ "doctype": "DocType",
+ "name": "AI Provider Parameter",
+ "module": "Chatbot",
+ "engine": "InnoDB",
+ "field_order": [
+  "parameter_key",
+  "label",
+  "description",
+  "field_type",
+  "required",
+  "is_secret",
+  "default_value",
+  "options",
+  "minimum",
+  "maximum",
+  "max_length",
+  "sort_order"
+ ],
+ "fields": [
+  {
+   "fieldname": "parameter_key",
+   "fieldtype": "Data",
+   "label": "Parameter Key",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "label": "Label",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "field_type",
+   "fieldtype": "Select",
+   "label": "Field Type",
+   "options": "Data\nPassword\nCheck\nInt\nFloat\nSelect",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "required",
+   "fieldtype": "Check",
+   "label": "Required"
+  },
+  {
+   "fieldname": "is_secret",
+   "fieldtype": "Check",
+   "label": "Is Secret",
+   "read_only": 1
+  },
+  {
+   "fieldname": "default_value",
+   "fieldtype": "Small Text",
+   "label": "Default Value"
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "Small Text",
+   "label": "Options"
+  },
+  {
+   "fieldname": "minimum",
+   "fieldtype": "Float",
+   "label": "Minimum"
+  },
+  {
+   "fieldname": "maximum",
+   "fieldtype": "Float",
+   "label": "Maximum"
+  },
+  {
+   "fieldname": "max_length",
+   "fieldtype": "Int",
+   "label": "Max Length",
+   "default": "4000"
+  },
+  {
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order"
+  }
+ ],
+ "permissions": [],
+ "track_changes": 0,
+ "allow_rename": 0,
+ "istable": 1
+}

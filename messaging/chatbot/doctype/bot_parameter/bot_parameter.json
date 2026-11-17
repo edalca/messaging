@@ -1,0 +1,191 @@
+{
+ "actions": [],
+ "autoname": "prompt",
+ "creation": "2026-10-20 19:15:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "label",
+  "enabled",
+  "column_break_main",
+  "parameter_type",
+  "expression",
+  "string_mode",
+  "allow_contextual_name_extraction",
+  "allow_ai_extraction",
+  "section_break_details",
+  "description",
+  "section_break_constraints",
+  "min_length",
+  "max_length",
+  "column_break_constraints",
+  "min_value",
+  "max_value",
+  "request_phrases_section",
+  "request_phrases"
+ ],
+ "fields": [
+  {
+   "description": "Descriptive label. Set the immutable Parameter Name using a lowercase identifier when creating the record.",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Parameter Label",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "String",
+   "fieldname": "parameter_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Parameter Type",
+   "options": "String\nInt\nDate\nName\nExpression\nDecimal\nBoolean",
+   "reqd": 1,
+   "description": "String accepts text; Int accepts integers; Decimal preserves exact decimal numbers; Boolean accepts whole affirmative or negative answers during directed capture; Date uses DD/MM/YYYY; Name preserves personal names; Expression preserves configured identifiers, including leading zeros."
+  },
+  {
+   "description": "One expression per line. # matches an ASCII digit; @ matches an ASCII letter. Letters, digits and - are literals. Escape #, @ or backslash with backslash.",
+   "fieldname": "expression",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Expression",
+   "depends_on": "eval:doc.parameter_type=='Expression'",
+   "mandatory_depends_on": "eval:doc.parameter_type=='Expression'"
+  },
+  {
+   "fieldname": "section_break_details",
+   "fieldtype": "Section Break",
+   "label": "Description"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:['String', 'Name', 'Int'].includes(doc.parameter_type)",
+   "fieldname": "section_break_constraints",
+   "fieldtype": "Section Break",
+   "label": "Optional Validation Constraints"
+  },
+  {
+   "depends_on": "eval:['String', 'Name'].includes(doc.parameter_type)",
+   "fieldname": "min_length",
+   "fieldtype": "Int",
+   "label": "Min Length"
+  },
+  {
+   "depends_on": "eval:['String', 'Name'].includes(doc.parameter_type)",
+   "fieldname": "max_length",
+   "fieldtype": "Int",
+   "label": "Max Length"
+  },
+  {
+   "fieldname": "column_break_constraints",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.parameter_type=='Int'",
+   "fieldname": "min_value",
+   "fieldtype": "Int",
+   "label": "Min Value"
+  },
+  {
+   "depends_on": "eval:doc.parameter_type=='Int'",
+   "fieldname": "max_value",
+   "fieldtype": "Int",
+   "label": "Max Value"
+  },
+  {
+   "fieldname": "string_mode",
+   "fieldtype": "Select",
+   "label": "Text Format",
+   "options": "Text\nSingle Word",
+   "default": "Text",
+   "depends_on": "eval:doc.parameter_type=='String'"
+  },
+  {
+   "fieldname": "allow_contextual_name_extraction",
+   "fieldtype": "Check",
+   "label": "Allow Contextual Name Recognition",
+   "default": "1",
+   "depends_on": "eval:doc.parameter_type=='Name'",
+   "description": "Recognize explicit introductions locally. Uncertain names are requested individually."
+  },
+  {
+   "fieldname": "allow_ai_extraction",
+   "fieldtype": "Check",
+   "label": "Allow AI Assisted Extraction",
+   "default": "0",
+   "depends_on": "eval:doc.parameter_type!='Expression'",
+   "description": "Future eligibility only. This option does not call an AI provider."
+  },
+  {
+   "fieldname": "request_phrases_section",
+   "fieldtype": "Section Break",
+   "label": "Request Phrases by Language"
+  },
+  {
+   "fieldname": "request_phrases",
+   "fieldtype": "Table",
+   "options": "Bot Parameter Translation",
+   "label": "Request Phrases"
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-23 11:26:42.672856",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "Bot Parameter",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Workspace Manager",
+   "write": 1
+  },
+  {
+   "role": "Messaging Automation",
+   "read": 1
+  }
+ ],
+ "quick_entry": 1,
+ "row_format": "Dynamic",
+ "show_name_in_global_search": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "label",
+ "track_changes": 1
+}
