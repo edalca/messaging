@@ -34,6 +34,35 @@ frappe.ui.form.on("Communication Channel Account", {
         await update_account_identity(frm);
         await frappe.require("/assets/messaging/js/provider_parameters.js");
         await messaging.provider_parameters.render(frm);
+        if (frm.is_new() || !frm.doc.enabled || !frappe.user.has_role("System Manager")) return;
+        const provider = await frappe.db.get_value("Communication Channel", frm.doc.channel, "provider");
+        if (provider.message?.provider !== "WHATSAPP") return;
+        const group = __("WhatsApp Actions");
+        for (const [action, label] of [
+            ["check", __("Check Meta connectivity")],
+            ["subscription", __("Check WABA subscription")],
+            ["subscribe", __("Subscribe Meta app")],
+        ]) {
+            frm.add_custom_button(label, () => {
+                const run = async () => {
+                    const response = await frappe.call({
+                        method: "messaging.whatsapp.admin.account_action",
+                        type: "POST", args: {account: frm.doc.name, action}, freeze: true
+                    });
+                    const result = response.message || {};
+                    if (action === "subscription") {
+                        frappe.msgprint(__("Subscribed Meta apps: {0}", [
+                            (result.apps || []).map(id => frappe.utils.escape_html(id)).join(", ") || __("None")
+                        ]));
+                    } else {
+                        frappe.msgprint(result.connected || result.success
+                            ? __("Meta operation succeeded.") : __("Meta operation did not confirm success."));
+                    }
+                };
+                if (action === "subscribe") frappe.confirm(__("Subscribe the Meta app to this WABA?"), run);
+                else return run();
+            }, group);
+        }
     },
     async channel(frm) {
         await frappe.require("/assets/messaging/js/provider_parameters.js");

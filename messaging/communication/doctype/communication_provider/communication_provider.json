@@ -1,60 +1,65 @@
 {
+ "actions": [],
+ "autoname": "field:provider_id",
+ "creation": "2026-11-17 23:00:37.824690",
  "doctype": "DocType",
- "name": "Communication Provider",
- "module": "Communication",
  "engine": "InnoDB",
  "field_order": [
   "provider_id",
   "provider_name",
-  "enabled",
-  "application",
   "version",
   "single_channel",
   "fixed_channel_id",
   "definition_hash",
+  "column_break_ezju",
+  "application",
+  "status",
+  "section_break_xbra",
   "parameters"
  ],
  "fields": [
   {
    "fieldname": "provider_id",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Provider ID",
-   "reqd": 1,
-   "unique": 1,
    "read_only": 1,
-   "in_list_view": 1
+   "reqd": 1,
+   "unique": 1
   },
   {
    "fieldname": "provider_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Provider Name",
-   "reqd": 1,
    "read_only": 1,
-   "in_list_view": 1
+   "reqd": 1
   },
   {
-   "fieldname": "enabled",
-   "fieldtype": "Check",
-   "label": "Enabled",
-   "default": "0",
-   "read_only": 1,
-   "in_list_view": 1
+   "default": "Disabled",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Disabled\nEnabled",
+   "read_only": 1
   },
   {
    "fieldname": "application",
    "fieldtype": "Data",
    "label": "Application",
-   "reqd": 1,
-   "read_only": 1
+   "read_only": 1,
+   "reqd": 1
   },
   {
    "fieldname": "version",
    "fieldtype": "Data",
    "label": "Version",
-   "reqd": 1,
-   "read_only": 1
+   "read_only": 1,
+   "reqd": 1
   },
   {
+   "default": "0",
    "fieldname": "single_channel",
    "fieldtype": "Check",
    "label": "Single Channel",
@@ -69,9 +74,9 @@
   {
    "fieldname": "definition_hash",
    "fieldtype": "Data",
+   "hidden": 1,
    "label": "Definition Hash",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
   },
   {
    "fieldname": "parameters",
@@ -79,16 +84,32 @@
    "label": "Parameters",
    "options": "Communication Provider Parameter",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ezju",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_xbra",
+   "fieldtype": "Section Break"
   }
  ],
+ "links": [],
+ "modified": "2026-11-17 23:28:59.434361",
+ "modified_by": "Administrator",
+ "module": "Communication",
+ "name": "Communication Provider",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
  "permissions": [
   {
-   "role": "System Manager",
-   "read": 1
+   "read": 1,
+   "role": "System Manager"
   }
  ],
- "track_changes": 0,
- "allow_rename": 0,
- "autoname": "field:provider_id",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
  "title_field": "provider_name"
 }

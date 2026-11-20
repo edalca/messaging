@@ -26,7 +26,7 @@ _registry_write = InternalWriteGuard('messaging_process_registry')
 
 
 class ProcessUnavailableError(frappe.ValidationError):
-    """Technical absence must not invalidate an otherwise unchanged approval."""
+    """The persisted Process is unavailable to consumers."""
 
 
 class ProcessDefinition(Document):
@@ -130,12 +130,12 @@ def after_app_uninstall(app_name):
         frappe.db.commit()
 
 
-def resolve_definition(process_id, *, expected_type):
+def resolve_definition(process_id, *, expected_type, allow_retired=False):
     """Fresh resolution is mandatory at approval and invocation boundaries."""
     if not process_id or not frappe.db.exists('Process Definition', process_id):
         raise ProcessUnavailableError(_('Select an available registered Process.'))
     doc = frappe.get_doc('Process Definition', process_id)
-    if not _is_available(doc) or doc.process_type != expected_type:
+    if doc.process_type != expected_type or (not allow_retired and not _is_available(doc)):
         raise ProcessUnavailableError(_('The Process is unavailable or has an incompatible type.'))
     return doc
 
@@ -153,10 +153,12 @@ def registered_snapshot(definition):
     return json.loads(definition.registered_snapshot)
 
 
-def bind_definition(doc):
+def bind_definition(doc, *, allow_retired=False):
     """Derive technical fields; browser-supplied paths never authorize execution."""
     expected = {'Bot Flow': 'bot_flow', 'Notification Rule': 'notification'}[doc.doctype]
-    definition = resolve_definition(doc.get('process_definition'), expected_type=expected)
+    previous = doc.get_doc_before_save() if allow_retired else None
+    definition = resolve_definition(doc.get('process_definition'), expected_type=expected,
+        allow_retired=bool(previous and previous.process_definition == doc.process_definition))
     doc.process_method = definition.method
     doc.process_invocation_mode = 'Internal Call (frappe.call)'
     return definition

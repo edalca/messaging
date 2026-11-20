@@ -10,7 +10,7 @@
   "column_break_provider",
   "provider_type",
   "application",
-  "enabled",
+  "status",
   "decision",
   "parameter_extraction",
   "schema_version",
@@ -58,11 +58,14 @@
    "description": "Owning application of an internal provider. External providers have no owner."
   },
   {
-   "fieldname": "enabled",
-   "fieldtype": "Check",
-   "label": "Enabled",
-   "default": "0",
-   "in_list_view": 1
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Enabled\nDisabled\nUnavailable",
+   "default": "Disabled",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
   },
   {
    "fieldname": "schema_version",

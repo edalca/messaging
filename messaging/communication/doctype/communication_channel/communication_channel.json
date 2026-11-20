@@ -7,11 +7,14 @@
   "provider",
   "channel_name",
   "column_break_channel",
-  "enabled",
+  "status",
   "single_provider_key",
   "parameters_section",
   "parameter_controls",
   "parameters",
+  "meta_webhook_section",
+  "meta_webhook_token",
+  "meta_webhook_details",
   "section_quotas",
   "quotas_enabled",
   "daily_quota_limit",
@@ -44,10 +47,12 @@
    "in_list_view": 1
   },
   {
-   "fieldname": "enabled",
-   "fieldtype": "Check",
-   "label": "Enabled",
-   "default": "0",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Disabled\nEnabled",
+   "default": "Disabled",
+   "read_only": 1,
    "in_list_view": 1
   },
   {
@@ -78,6 +83,20 @@
    "label": "Parameters",
    "options": "Communication Provider Value",
    "hidden": 1
+  },
+  {
+   "fieldname": "meta_webhook_section",
+   "fieldtype": "Section Break",
+   "label": "Meta Webhook",
+   "depends_on": "eval:doc.provider === 'WHATSAPP' && !doc.__islocal"
+  },
+  {
+   "fieldname": "meta_webhook_token",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "meta_webhook_details",
+   "fieldtype": "HTML"
   },
   {
    "fieldname": "section_quotas",
@@ -176,7 +195,7 @@
  ],
  "track_changes": 0,
  "allow_rename": 0,
- "autoname": "hash",
+ "naming_rule": "By script",
  "title_field": "channel_name",
  "search_fields": "channel_name,provider"
 }

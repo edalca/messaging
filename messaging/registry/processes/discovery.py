@@ -11,7 +11,7 @@ import threading
 from copy import deepcopy
 from frappe import _
 from messaging.common.primitives import _freeze
-from messaging.registrations.processes.contracts import PROCESS_CONTRACT_VERSION, BotProcess, NotifyProcess, validate_definition_signature, validate_handler_signature, validate_process_schema_v1
+from messaging.registry.processes.contracts import PROCESS_CONTRACT_VERSION, BotProcess, NotifyProcess, validate_definition_signature, validate_handler_signature, validate_process_schema_v1
 from messaging.communication.doctype.process_definition.process_definition import (
     PROCESS_TIMEOUT_SECONDS,
     _discovery_deadline as execution_deadline,
@@ -224,17 +224,36 @@ def document_modules(definition, spec):
         if get_module_app(row.module) in applications}
 
 
-def source_closure(definition, spec):
+def _source_digest(module, source):
+    """Keep app release metadata out of Process revisions while verifying executable initializers."""
+    if module == 'messaging':
+        tree = ast.parse(source)
+        if len(tree.body) == 1 and isinstance(assignment := tree.body[0], ast.Assign):
+            if (len(assignment.targets) == 1 and isinstance(target := assignment.targets[0], ast.Name)
+                and target.id == '__version__' and isinstance(assignment.value, ast.Constant)
+                and isinstance(assignment.value.value, str)):
+                source = b'__version__ = ""\n'
+    return hashlib.sha256(source).hexdigest()
+
+
+def source_closure(definition, spec, *, platform_modules=()):
     """Fingerprint the full static source closure in declared application roots."""
     roots = {app: Path(frappe.get_app_path(app)).resolve()
         for app in (definition.application, *spec.get('dependencies', []))}
     queue = [path.rpartition('.')[0] for path in spec.get('functions', {}).values()]
-    queue.extend(document_modules(definition, spec))
-    queue.extend(app + ".hooks" for app in roots)
+    if not platform_modules:
+        queue.extend(document_modules(definition, spec))
+        queue.extend(app + ".hooks" for app in roots)
     result = {}
     while queue:
         module = queue.pop()
-        if module in result or module.split('.')[0] not in roots:
+        if (
+            module in result or module.split('.')[0] not in roots
+            or module in platform_modules
+            or (platform_modules and module.startswith(
+                ('messaging.common', 'messaging.security', 'messaging.registry')
+            ))
+        ):
             continue
         root = roots[module.split('.')[0]]
         file = root.joinpath(*module.split('.')[1:]).with_suffix('.py')
@@ -245,7 +264,7 @@ def source_closure(definition, spec):
         if not file.resolve().is_relative_to(root) or len(result) >= 512:
             raise frappe.ValidationError(_('Process capability source closure is invalid or too large.'))
         source = file.read_bytes()
-        result[module] = dict(path=str(file), digest=hashlib.sha256(source).hexdigest())
+        result[module] = dict(path=str(file), digest=_source_digest(module, source))
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -266,10 +285,19 @@ from messaging.communication.doctype.process_definition.revisions import registr
 def _uncached_capability_revision(definition):
     from messaging.communication.doctype.process_definition.revisions import runtime_revision, runtime_sources
     spec = declaration(definition)
+    platform = runtime_sources()
     sources = source_closure(definition, spec)
-    sources.update(runtime_sources())
+    # The deployment manifest still protects shared runtime code at invocation.
+    # Approval revisions identify the registered implementation and its contract.
+    implementation = (
+        source_closure(definition, spec, platform_modules={*platform, 'messaging.hooks'})
+        if definition.application == 'messaging' else sources
+    )
+    implementation_sources = sorted(implementation)
+    sources.update(platform)
     verify_source_closure(sources)
-    return dict(declaration=spec, sources=sources, runtime=runtime_revision(), policy=policy_fingerprint())
+    return dict(declaration=spec, sources=sources, implementation_sources=implementation_sources,
+        runtime=runtime_revision(), policy=policy_fingerprint())
 
 
 def verify_registered_revision(definition):
@@ -283,14 +311,14 @@ def verify_registered_revision(definition):
     from messaging.security.permissions import installed_applications
     if any(app not in installed_applications() for app in snapshot['declaration']['dependencies']):
         raise frappe.PermissionError(_('Process dependencies must be installed required applications.'))
-    if (snapshot['runtime'] != runtime_revision() or snapshot['policy'] != policy_fingerprint()
+    if ('implementation_sources' not in snapshot or snapshot['runtime'] != runtime_revision() or snapshot['policy'] != policy_fingerprint()
         or registration_revisions(definition, snapshot)['capability_revision'] != definition.capability_revision):
         raise frappe.ValidationError(_('Process code changed. Synchronize its owning application.'))
     for module, source in snapshot['sources'].items():
         path = Path(frappe.get_app_path(module.split('.')[0])).joinpath(*module.split('.')[1:]).with_suffix('.py')
         if not path.is_file():
             path = Path(frappe.get_app_path(module.split('.')[0])).joinpath(*module.split('.')[1:]) / '__init__.py'
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != source['digest']:
+        if not path.is_file() or _source_digest(module, path.read_bytes()) != source['digest']:
             raise frappe.ValidationError(_('Process code changed. Synchronize its owning application.'))
     verify_source_closure(snapshot['sources'])
     return snapshot

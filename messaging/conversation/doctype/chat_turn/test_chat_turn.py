@@ -44,7 +44,7 @@ from messaging.communication.doctype.process_definition.test_process_definition 
     async_probe_result,
 )
 
-from messaging.registrations.processes import BotProcess
+from messaging.registry.processes import BotProcess
 from messaging.registry.processes import register_processes
 
 
@@ -194,7 +194,7 @@ class TestChatTurn(unittest.TestCase):
 			doc.name = channel_name
 			doc.provider = "EMULR"
 			doc.channel_name = f"Synthetic {channel_name}"
-			doc.enabled = 1
+			doc.status = "Enabled"
 			doc.update(self.quota_policy)
 			doc.db_insert()
 			self.fixture_channels.append(channel_name)
@@ -334,14 +334,15 @@ class TestChatTurn(unittest.TestCase):
 			if row.status_code in localized_templates:
 				doc.append('output_translations', dict(language=language, status_code=row.status_code, template_reference=localized_templates[row.status_code]))
 		wanted_active = doc.status == "Enabled"
-		doc.status = "Disabled"
+		doc.status = "Untested"
 		doc.insert()
 		approval = validate_process(doc.as_dict())
 		if approval.get('execution_log'): self.fixture_test_logs.append(approval['execution_log'])
 		self.assertEqual(approval['status'], 'Passed', approval)
 		doc.reload()
-		set_active(doc.as_dict(), int(wanted_active))
-		doc.reload()
+		if wanted_active:
+			set_active(doc.as_dict(), 1)
+			doc.reload()
 
 		self.flows.append(doc.name)
 		frappe.db.commit()
@@ -1097,8 +1098,8 @@ class InterpretationFixtures:
 	):
 		"""A closed provider double for contract tests, never production classification."""
 
-		from messaging.registrations import ai_providers as wire
-		def evaluate(provider, values, request):
+		from messaging.registry import ai_providers as wire
+		def evaluate(provider, values, request, **kwargs):
 			settings = frappe.get_single('Bot Settings')
 			wanted, denied = set(requested), set(excluded)
 			catalog = engine.catalog()
@@ -2178,7 +2179,7 @@ class TestFlowConsumers(unittest.TestCase):
         self.select('registration', flow)
         self.natural()
         seen = []
-        def provider(_provider, _values, request):
+        def provider(_provider, _values, request, **kwargs):
             seen.append(request.message.text)
             self.assertNotIn('number 8.', request.message.text)
             self.assertNotIn('capture_pending', __import__('dataclasses').asdict(request.context))
@@ -2255,7 +2256,7 @@ class TestFlowConsumers(unittest.TestCase):
             self.assertEqual(fresh['session'],start['session'])
 
     def test_decision_human_signal_enters_filter_and_preserves_mixed_queue(self):
-        from messaging.registrations.ai_providers import DecisionResponse, DecisionOutcome
+        from messaging.registry.ai_providers import DecisionResponse, DecisionOutcome
         human, _ = self.consumer_flow()
         self.select('human', human, keep=())
         greeting = self.greeting_flow()
@@ -2272,7 +2273,7 @@ class TestFlowConsumers(unittest.TestCase):
         for index, (text, greet, mixed, ambiguous, answers, transfers) in enumerate(cases):
             with self.subTest(text=text):
                 CALLS.clear()
-                def classify(provider, values, request):
+                def classify(provider, values, request, **kwargs):
                     self.assertTrue(request.human_attention_available)
                     self.assertFalse({human.workflow_name, greeting.workflow_name} & {row.label for row in request.available_flows})
                     refs = tuple(row.ref for row in request.available_flows if row.label == business.workflow_name) if mixed else ()
@@ -2301,14 +2302,14 @@ class TestFlowConsumers(unittest.TestCase):
                 self.assertNotIn('clarify', done['response'])
 
     def test_human_decision_waits_for_registration_and_classifies_original_once(self):
-        from messaging.registrations.ai_providers import DecisionResponse, DecisionOutcome
+        from messaging.registry.ai_providers import DecisionResponse, DecisionOutcome
         registration, _ = self.consumer_flow()
         self.select('registration', registration)
         human, _ = self.consumer_flow()
         self.select('human', human, keep=())
         self.natural()
         original = 'Me quiero comunicar con una persona'
-        def classify(provider, values, request):
+        def classify(provider, values, request, **kwargs):
             self.assertEqual(request.message.text, original)
             self.assertTrue(request.human_attention_available)
             return DecisionResponse(request.request_id, DecisionOutcome.RECOGNIZED, human_attention_requested=True)
@@ -2328,11 +2329,11 @@ class TestFlowConsumers(unittest.TestCase):
         self.assertEqual(CALLS, [1, 2])
 
     def test_disabled_human_signal_cannot_start_filter(self):
-        from messaging.registrations.ai_providers import DecisionResponse, DecisionOutcome
+        from messaging.registry.ai_providers import DecisionResponse, DecisionOutcome
         human, _ = self.consumer_flow()
         self.select('human', human, keep=(), enabled=False)
         self.natural()
-        def classify(provider, values, request):
+        def classify(provider, values, request, **kwargs):
             self.assertFalse(request.human_attention_available)
             return DecisionResponse(request.request_id, DecisionOutcome.RECOGNIZED, human_attention_requested=True)
         with patch('messaging.chatbot.doctype.ai_configuration.execution.run', side_effect=classify) as ai:

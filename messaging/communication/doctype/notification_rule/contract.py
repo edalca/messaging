@@ -15,7 +15,7 @@ from messaging.communication.doctype.communication_template.communication_templa
 from messaging.communication.doctype.notification_rule.conditions import condition_fields
 from messaging.communication.doctype.process_definition.execution import _decimal_source_value
 from messaging.common.primitives import decimal_json
-from messaging.registrations.processes import ProcessSchemaValidationError, _input_definitions, _input_value, project_outcomes, validate_process_schema_v1
+from messaging.registry.processes import ProcessSchemaValidationError, _input_definitions, _input_value, project_outcomes, validate_process_schema_v1
 from messaging.communication.doctype.process_definition.process_definition import bind_definition, registered_contract
 from messaging.registry.processes.discovery import (
 	consumer_contract,
@@ -28,7 +28,7 @@ from messaging.communication.doctype.process_definition.validation import (
 
 def synchronize(rule, *, contract=None):
 	"""Preserve per-state presentation and Send decisions; never execute a handler."""
-	definition = bind_definition(rule)
+	definition = bind_definition(rule, allow_retired=True)
 	if contract is None:
 		contract = registered_contract(definition)
 	old_contract = json.loads(rule.process_contract or "{}")
@@ -86,14 +86,6 @@ def synchronize(rule, *, contract=None):
 				row.output_fields = json.dumps(outcome["fields"], sort_keys=True)
 				retained_outputs.append(row)
 		rule.set("outputs", retained_outputs)
-
-		# Reset approval receipt since the underlying Process definition changed
-		rule.process_test_status = "Untested"
-		rule.process_test_fingerprint = None
-		rule.process_test_log = None
-		rule.process_test_checked_at = None
-		rule.process_test_checked_by = None
-		rule.process_test_evidence = None
 
 	seen = set()
 	for row in list(rule.process_parameters):
@@ -260,7 +252,7 @@ def validate_parameters(rule, contract, *, require_values=False):
 			else bool(row.source_field)
 		)
 		if not configured:
-			if (require_values or rule.enabled) and item["required"]:
+			if (require_values or rule.status == "Enabled") and item["required"]:
 				raise frappe.ValidationError(
 					_("Configure every required Process parameter before enabling the rule.")
 				)
@@ -405,20 +397,6 @@ def prepared_data(result, rule, *, administrative_test=False):
 	row = selected_output(rule, result["status"])
 	if not row.send:
 		return None
-	recipient = result["recipient"]
-	provider = _rule_provider(rule)
-	mandatory_redirect = bool(
-		provider
-		and "notification_redirect_required" in provider_definition(provider)["capabilities"]
-	)
-	if (
-		not isinstance(recipient, str)
-		or (not recipient.strip() and not mandatory_redirect)
-		or recipient != recipient.strip()
-		or len(recipient) > 140
-		or any(ord(c) < 32 or ord(c) == 127 for c in recipient)
-	):
-		_invalid(_("Notification Process response 'recipient' is missing or invalid."))
 	try:
 		output = resolve_output(
 			"Template", data=data, template_reference=row.template_reference,
@@ -426,12 +404,16 @@ def prepared_data(result, rule, *, administrative_test=False):
 		)
 	except frappe.ValidationError:
 		_invalid(_("Notification Output does not satisfy its content contract."))
-	return dict(
-		recipient=recipient,
+	prepared = dict(
+		recipient=result["recipient"],
 		prepared_text=output["text"],
 		variables_json=json.dumps(output["variables"], ensure_ascii=False, allow_nan=False),
 		template_revision=output["revision"],
 	)
+	if "external_contract" in output:
+		prepared["template_contract_json"] = json.dumps(output["external_contract"],
+			ensure_ascii=False, sort_keys=True, allow_nan=False)
+	return prepared
 
 
 @frappe.whitelist(methods=["POST"])

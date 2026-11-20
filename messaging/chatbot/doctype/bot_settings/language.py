@@ -9,6 +9,7 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from messaging.common.primitives import enabled_language
 
 _current = ContextVar('messaging_presentation_language', default=None)
 _notification = ContextVar('messaging_notification_language', default=False)
@@ -31,12 +32,9 @@ def presentation_language(language, *, notification=None):
 
 def validate_language(language: Any) -> str:
     """Require the exact identifier of an enabled native Language record."""
-    if not isinstance(language, str) or not language or language != language.strip():
+    if not enabled_language(language):
         frappe.throw(_("Each Chatbot Language must reference an enabled native Language code."))
-    record = frappe.db.get_value("Language", language, ["name", "language_code", "enabled"], as_dict=True)
-    if not record or record.name != language or record.language_code != language or record.enabled != 1:
-        frappe.throw(_("Each Chatbot Language must reference an enabled native Language code."))
-    return record.name
+    return language
 
 
 def validate_chatbot_languages(settings: Document, *, assign_default=False) -> str | None:

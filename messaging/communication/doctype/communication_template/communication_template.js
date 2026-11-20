@@ -123,7 +123,10 @@ frappe.provide("messaging.communication_template");
 		return { variables, errors, has_syntax_error };
 	}
 
-	function inspect_template(doc) {
+	function inspect_template(doc, formats = doc?.__onload?.template_capabilities?.parameter_formats) {
+		const format = doc?.parameters?.find(row => row.parameter_key === "parameter_format");
+		const selected = (format && JSON.parse(format.value || "null")) || formats?.[0]?.[0];
+		const repeat = formats?.some(([code, allowed]) => code === selected && allowed);
 		const warnings = [];
 		const push_warning = (msg) => {
 			if (msg && !warnings.includes(msg)) warnings.push(msg);
@@ -169,6 +172,7 @@ frappe.provide("messaging.communication_template");
 
 			for (const var_name of comp.variables) {
 				if (used_seen.has(var_name)) {
+					if (repeat) continue;
 					push_warning(
 						__(
 							"Template variable '{0}' cannot be used more than once across Header, Body, and Footer.",
@@ -218,10 +222,12 @@ frappe.provide("messaging.communication_template");
 
 	function render_warnings(frm, inspection) {
 		if (!frm?.doc) return null;
-		const state = inspection || inspect_template(frm.doc);
+		const state = inspection || inspect_template(frm.doc, frm._template_capabilities?.parameter_formats);
 		frm._template_validation = state;
 		if (typeof frm.set_intro === "function") {
 			const warnings = state.warnings.map((w) => frappe.utils.escape_html(w));
+			const issue = frm.doc.last_sync_error || frm.doc.__onload?.template_sync_issue;
+			if (issue) warnings.push(frappe.utils.escape_html(__(issue)));
 			if (frm.doc.__onload?.template_status_supported && !frm.is_new()) {
 				const syncErrors = (frm.doc.statuses || []).filter((row) => row.last_error);
 				if (syncErrors.length) {
@@ -249,7 +255,7 @@ frappe.provide("messaging.communication_template");
 
 	function sync_component_variables(frm) {
 		if (!frm?.doc || frm._syncing_template_variables) return null;
-		const initial = inspect_template(frm.doc);
+		const initial = inspect_template(frm.doc, frm._template_capabilities?.parameter_formats);
 		if (!initial.has_syntax_error) {
 			const missing = initial.unique_valid_variables.filter(
 				(name) => !initial.declared_seen.has(name)
@@ -337,9 +343,10 @@ frappe.provide("messaging.communication_template");
 
 	function lock_template_identity(frm) {
 		const locked = !frm.is_new();
-		for (const field of ["template_name", "channel", "language"]) {
+		for (const field of ["template_name", "channel", "account", "provider_language"]) {
 			frm.set_df_property(field, "read_only", locked);
 		}
+		frm.set_df_property("language", "read_only", locked && !frm.doc.provider_language);
 		frm.set_df_property("status", "read_only", 1);
 	}
 
@@ -418,18 +425,16 @@ frappe.provide("messaging.communication_template");
 })();
 
 frappe.ui.form.on("Communication Template", {
+	setup(frm) {
+		frm.set_query("account", () => ({filters: {channel: frm.doc.channel || ""}}));
+		frm.set_query("language", () => ({filters: {enabled: 1}}));
+	},
 	async refresh(frm) {
 		messaging.communication_template.lock_template_identity(frm);
 		messaging.communication_template.bind_component_inputs(frm);
-		messaging.communication_template.render_warnings(frm);
-		present_provider_status(frm);
 		messaging.communication_template.refresh_template_lifecycle(frm);
-		const statusSupported = Boolean(frm.doc.__onload?.template_status_supported);
-		frm.toggle_display?.("external_status_section", statusSupported && !frm.is_new());
-		frm.remove_custom_button?.(__("Synchronize status"));
-		if (statusSupported && !frm.is_new() && frappe.user?.has_role("System Manager")) {
-			frm.add_custom_button(__("Synchronize status"), () => synchronize_template_status(frm));
-		}
+		await refresh_template_capabilities(frm);
+		messaging.communication_template.render_warnings(frm);
 		if (frm.fields_dict.parameter_controls) {
 			await frappe.require('/assets/messaging/js/provider_parameters.js');
 			await messaging.provider_parameters.render(frm);
@@ -445,8 +450,46 @@ frappe.ui.form.on("Communication Template", {
 	},
 	async channel(frm) {
 		if (!frm.is_new()) return;
+		if (frm.doc.account) await frm.set_value("account", null);
+		if (frm.doc.provider_language) {
+			if (frm.doc.language_mapping !== "Manual") await frm.set_value("language", null);
+			await frm.set_value({provider_language: "", language_mapping: ""});
+		}
+		await refresh_template_capabilities(frm);
 		await frappe.require('/assets/messaging/js/provider_parameters.js');
 		await messaging.provider_parameters.selection_changed(frm, 'channel');
+		messaging.communication_template.render_warnings(frm);
+	},
+	provider_parameter_format(frm) {
+		messaging.communication_template.render_warnings(frm);
+	},
+	async provider_language(frm) {
+		const doc = frm.doc;
+		const {channel, provider_language, language} = doc;
+		if (!frm.is_new() || !channel) return;
+		if (!provider_language) {
+			if (doc.language_mapping !== "Manual") await frm.set_value("language", null);
+			await frm.set_value("language_mapping", "");
+			return;
+		}
+		const {message} = await frappe.call({
+			method: template_external_api + "template_language_preview", type: "GET",
+			args: {channel, provider_language},
+		});
+		if (frm.doc !== doc || doc.channel !== channel || doc.provider_language !== provider_language
+			|| doc.language !== language) return;
+		frm._applying_template_language = true;
+		try {
+			await frm.set_value("language", message.language || null);
+			await frm.set_value("language_mapping", message.origin);
+		} finally {
+			frm._applying_template_language = false;
+		}
+	},
+	language(frm) {
+		if (frm.doc.provider_language && !frm._applying_template_language) {
+			return frm.set_value("language_mapping", frm.doc.language ? "Manual" : "Unassigned");
+		}
 	},
 });
 
@@ -466,32 +509,95 @@ frappe.ui.form.on("Communication Template Parameter", {
 });
 
 
-const PROVIDER_STATUS_LABELS = {
-	not_applicable: () => __("Not applicable"),
-	not_synchronized: () => __("Unverified"),
-	multiple: () => __("Multiple statuses"),
-};
+const template_external_api = "messaging.communication.doctype.communication_template.external.";
 
-function present_provider_status(frm) {
-	const input = frm.fields_dict.provider_status?.$input;
-	const supported = Boolean(frm.doc.__onload?.template_status_supported);
-	const key = !supported && !frm.is_new() ? "not_applicable" : frm.doc.provider_status;
-	const label = PROVIDER_STATUS_LABELS[key];
-	if (input && label) input.val(label());
+async function refresh_template_capabilities(frm) {
+	const channel = frm.doc.channel;
+	let capabilities = frm.doc.__onload?.template_capabilities;
+	const manager = frappe.user?.has_role("System Manager");
+	if (frm.is_new() && channel && manager) {
+		const result = await frappe.call({method: template_external_api + "template_capabilities", type: "GET", args: {channel}});
+		if (frm.doc.channel !== channel) return;
+		capabilities = result.message;
+	}
+	frm._template_capabilities = capabilities;
+	const scoped = capabilities?.scope === "Account";
+	const languages = capabilities?.languages || [];
+	const hasCatalog = Boolean(languages.length || frm.doc.provider_language);
+	if (hasCatalog) {
+		const escape = frappe.utils.escape_html;
+		const options = ["", ...languages.map(({code, label}) => ({
+			value: code, label: escape(`${__(label)} (${code})`),
+		}))];
+		if (frm.doc.provider_language && !languages.some(row => row.code === frm.doc.provider_language)) {
+			options.push({value: frm.doc.provider_language, label: escape(frm.doc.provider_language), disabled: true});
+		}
+		frm.set_df_property("provider_language", "options", options);
+	}
+	frm.toggle_display?.(["provider_language", "language_mapping"], hasCatalog);
+	frm.toggle_reqd?.("provider_language", hasCatalog);
+	frm.toggle_reqd?.("language", !hasCatalog || frm.doc.status === "Active");
+	frm.toggle_display?.("account", scoped || Boolean(frm.doc.account));
+	frm.toggle_reqd?.("account", scoped);
+	frm.toggle_display?.(["provider_status", "published_revision", "last_sync_error"], Boolean(capabilities?.query));
+	frm.toggle_display?.("external_status_section", Boolean(capabilities?.query && !capabilities.managed && !frm.is_new()));
+	const unverified = Boolean(capabilities?.managed && !frm.doc.published_revision);
+	frm.toggle_display?.("unverified_revision", unverified);
+	if (unverified) {
+		const escape = frappe.utils.escape_html;
+		frm.fields_dict.unverified_revision.$wrapper.html(
+			`<label class="control-label">${escape(__("Published Revision"))}</label>
+			<div class="control-value like-disabled-input">${escape(__("Unverified"))}</div>`
+		);
+	}
+
+	const providerLabel = {not_applicable: __("Not applicable"), not_synchronized: __("Unverified"), multiple: __("Multiple statuses")};
+	const label = providerLabel[frm.doc.provider_status];
+	if (label) frm.fields_dict.provider_status?.$input?.val(label);
+
+	for (const label of ["Synchronize status", "Publish to provider", "Use provider content"]) {
+		frm.remove_custom_button?.(__(label));
+	}
+	if (frm.is_new() || !manager || !frm.perm?.[0]?.write) return;
+	if (capabilities?.query) {
+		frm.add_custom_button(__("Synchronize status"), () => template_action(frm,
+			"messaging.communication.doctype.communication_template.status.synchronize_template_status"));
+	}
+	if (capabilities?.publish && !frm.doc.__onload?.template_publication_pending) {
+		frm.add_custom_button(__("Publish to provider"), () => publish_template(frm, capabilities));
+	}
+	if (capabilities?.managed && frm.doc.sync_state === "Conflict") {
+		frm.add_custom_button(__("Use provider content"), () => frappe.confirm(
+			__("Replace this local draft with the current provider content?"),
+			() => template_action(frm, template_external_api + "adopt_external_template")));
+	}
 }
 
-async function synchronize_template_status(frm) {
-	if (frm.is_new() || frm.is_dirty()) {
-		frappe.msgprint(__("Save the template before synchronizing its status."));
+async function template_action(frm, method, options) {
+	if (frm.is_dirty() || frm.is_new()) {
+		frappe.msgprint(__("Save pending template changes first."));
 		return;
 	}
-	const response = await frappe.call({
-		method: "messaging.communication.doctype.communication_template.status.synchronize_template_status",
-		type: "POST",
-		args: {name: frm.doc.name},
-		freeze: true,
-	});
-	if (response.message) {
-		frm.reload_doc();
+	const args = {name: frm.doc.name};
+	if (!method.endsWith(".synchronize_template_status")) args.modified = frm.doc.modified;
+	if (options) args.options = options;
+	await frappe.call({method, type: "POST", args, freeze: true});
+	await frm.reload_doc();
+}
+
+function publish_template(frm, capabilities) {
+	if (frm.is_dirty()) return frappe.msgprint(__("Save pending template changes first."));
+	const fields = (capabilities.fields || []).map(([fieldname, label, fieldtype, choices]) => ({
+		fieldname, label: __(label), fieldtype, options: choices.join("\n"),
+		reqd: fieldtype === "Select" ? 1 : 0,
+	}));
+	if (frm.doc.sync_state === "Conflict") {
+		fields.push({fieldname: "confirm_conflict", label: __("Replace the current provider content"), fieldtype: "Check"});
+	}
+	const publish = (options) => template_action(frm, template_external_api + "publish_template", options);
+	if (fields.length) {
+		frappe.prompt(fields, publish, __("Publish to provider"), __("Publish"));
+	} else {
+		frappe.confirm(__("Publish this saved draft to the provider?"), () => publish({}));
 	}
 }

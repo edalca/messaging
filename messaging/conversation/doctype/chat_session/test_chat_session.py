@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock
 
 import frappe
 
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.chatbot.doctype.bot_dispatch.bot_dispatch import simulate_dispatch
 from messaging.common.primitives import utcnow, identity_key
 from messaging.conversation.doctype.chat_message.chat_message import _writing, dispatch_content
@@ -133,7 +134,8 @@ class TestHuman(unittest.TestCase):
 		self.addCleanup(self.registry.__exit__, None, None, None)
 		sync_communication_providers()
 		set_provider_enabled('CTRPRO', True)
-		self.probe_channel = frappe.get_doc(dict(doctype='Communication Channel', provider='CTRPRO', channel_name='Synthetic human contract channel', enabled=1)).insert(set_name='test')
+		self.probe_channel = frappe.get_doc(dict(doctype='Communication Channel', provider='CTRPRO', channel_name='test')).insert()
+		set_channel_status(self.probe_channel.name, 'Enabled')
 		self.binding = bind(self.prefix, name=self.prefix)
 		frappe.db.commit()
 		self.error_logs_before = set(frappe.get_all("Error Log", pluck="name"))
@@ -760,12 +762,12 @@ class TestConversationInbox(unittest.TestCase):
 		self.channel = "emulator"
 		self.created_channel = False
 		if not frappe.db.exists("Communication Channel", self.channel):
-			frappe.get_doc({
+			channel = frappe.get_doc({
 				"doctype": "Communication Channel",
 				"provider": "EMULR",
 				"channel_name": "Synthetic Emulator Channel",
-				"enabled": 1,
 			}).insert(ignore_permissions=True)
+			set_channel_status(channel.name, 'Enabled')
 			self.created_channel = True
 		self.channel_name = frappe.db.get_value("Communication Channel", self.channel, "channel_name")
 		self.account_name = "Synthetic Inbox Account"
@@ -2817,7 +2819,8 @@ class TestConversationSupervision(unittest.TestCase):
 
 		# Channel disabled test using an isolated synthetic provider + channel
 		prev_states = get_provider_states()
-		ch_name = self.prefix + '-dis-ch'
+		channel_label = self.prefix.translate(str.maketrans('0123456789_', 'abcdefghij ')) + ' disabled channel'
+		ch_name = channel_label.lower().replace(' ', '_')
 		acc_name = self.prefix + '-dis-ch-acc'
 		try:
 			with registered_providers([emulator_definition(), PROBE]):
@@ -2826,9 +2829,8 @@ class TestConversationSupervision(unittest.TestCase):
 				ch_doc = frappe.get_doc(dict(
 					doctype='Communication Channel',
 					provider='CTRPRO',
-					channel_name=ch_name,
-					enabled=0,
-				)).insert(set_name=ch_name, ignore_permissions=True)
+					channel_name=channel_label,
+				)).insert(ignore_permissions=True)
 				acc_doc = frappe.get_doc(dict(
 					doctype='Communication Channel Account',
 					channel=ch_doc.name,

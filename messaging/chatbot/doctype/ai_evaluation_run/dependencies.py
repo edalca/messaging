@@ -2,13 +2,15 @@
 import ast
 import importlib
 import inspect
+import json
+from itertools import groupby
 from pathlib import Path
 
 import frappe
 
 from messaging.chatbot.doctype.ai_configuration.execution import (
 	configuration_values,
-	fingerprint,
+	profile_fingerprint,
 	provider_for,
 	invalidate_configuration,
 )
@@ -22,6 +24,7 @@ from messaging.chatbot.doctype.ai_evaluation_case_template.ai_evaluation_case_te
 	revision,
 )
 from messaging.registry.ai_providers import internal_provider
+from messaging.registry.ai_providers.rest import WIRE_VERSIONS
 from messaging.chatbot.doctype.bot_settings.language import validate_chatbot_languages
 from messaging.common.primitives import utcnow
 from messaging.security.permissions import verify_loaded_method
@@ -117,14 +120,14 @@ def template_dependency(doc, *, languages=None):
 	)
 
 
-def implementation_revision(provider, *, verify=False):
+def implementation_revision(provider, *, profile_type, verify=False):
 	modules = [
 		"messaging.chatbot.doctype.ai_configuration.execution",
 		"messaging.chatbot.doctype.ai_provider.ai_provider",
 		"messaging.registry.ai_providers",
-        "messaging.registrations.ai_providers.contracts",
+        "messaging.registry.ai_providers.contracts",
         "messaging.registry.ai_providers.operations",
-        "messaging.registrations.ai_providers.wire",
+        "messaging.registry.ai_providers.wire",
 		"messaging.registry._catalog",
 		"messaging.registry",
 		"messaging.chatbot.doctype.bot_settings.interpretation",
@@ -149,15 +152,25 @@ def implementation_revision(provider, *, verify=False):
 			"messaging.communication.doctype.process_definition.execution",
 		]
 	)
-	if provider.provider_type == 'Internal':
+	if provider.provider_type == "Internal":
 		definition = internal_provider(provider.provider_id, provider.application)
-		modules.extend(
-			(
-				*[capability.execute.__module__ for capability in (definition.decision, definition.parameter_extraction) if capability is not None],
-				definition.validate_configuration.__module__,
-			)
-		)
-	if provider.parameter_extraction:
+		operation = definition.decision if profile_type == "Decision" else definition.parameter_extraction
+		modules.append(definition.validate_configuration.__module__)
+		if operation is not None:
+			modules.append(operation.execute.__module__)
+	else:
+		modules.extend((
+			"messaging.registry.ai_providers.rest",
+			"messaging.chatbot.doctype.ai_configuration.rest_transport",
+		))
+	if profile_type == "Decision":
+		modules.extend((
+			"messaging.registry.ai_providers.decision",
+			"messaging.chatbot.doctype.ai_configuration.policy",
+			"messaging.chatbot.doctype.bot_settings.decision_policy",
+		))
+	else:
+		modules.append("messaging.registry.ai_providers.extraction")
 		modules.extend(
 			"messaging.chatbot.doctype.bot_parameter.parameters." + name
 			for name in (
@@ -227,18 +240,38 @@ def snapshot(doc, *, settings=None, verify=False, administrative=False):
 	body = dict(
 		configuration=doc.name,
 		generation=doc.evaluation_generation,
-		configuration_revision=fingerprint(provider, values, behavior_only=True),
+		configuration_revision=profile_fingerprint(doc, provider, values),
 		context=context,
 		mandatory=mandatory,
 		policy=POLICY,
-		implementation=implementation_revision(provider, verify=verify),
+		implementation=implementation_revision(provider, profile_type=doc.profile_type, verify=verify),
 	)
+	if provider.provider_type == "Internal":
+		body["capability_contract"] = (
+			"decision-evidence-v1" if doc.profile_type == "Decision" else "parameter-extraction-v1"
+		)
+	else:
+		body["capability_contract"] = WIRE_VERSIONS[doc.profile_type]
 	return body, revision(body), rows
 
 
 def evidence_invalidated(run):
 	return bool(
 		run.invalidated_at or frappe.cache.get_value("ai-evaluation-revoked:" + run.name)
+	)
+
+
+def matches_evaluation(run, doc, current):
+	if run.profile_type != doc.profile_type:
+		return False
+	if run.dependency_fingerprint == current:
+		return True
+	try:
+		receipt = json.loads(doc.get("evaluation_compatibility") or "{}")
+	except (ValueError, TypeError):
+		return False
+	return run.evidence_kind == "Real" and run.status == "Passed" and receipt == dict(
+		run=run.name, previous=run.dependency_fingerprint, current=current,
 	)
 
 
@@ -285,24 +318,30 @@ def dependencies_changed(doc=None, method=None):
 		filters["configuration"] = doc.name
 	elif doc and doc.doctype == "AI Provider":
 		filters["provider"] = doc.name
-	for row in frappe.get_all(
+	rows = frappe.get_all(
 		"AI Evaluation Run",
 		filters=filters,
 		fields=["name", "configuration"],
+		order_by="configuration, name",
 		limit_page_length=0,
-	):
-		run = frappe.get_doc("AI Evaluation Run", row.name)
+	)
+	from .runtime import approval
+	for name, runs in groupby(rows, key=lambda row: row.configuration):
+		profile = frappe.get_doc("AI Configuration", name, for_update=True)
+		provider = provider_for(profile)
+		available = provider.status == "Enabled"
 		try:
-			_body, current, _rows = snapshot(
-				frappe.get_doc("AI Configuration", row.configuration)
-			)
-			changed = run.dependency_fingerprint != current
+			current = snapshot(profile)[1] if available else None
 		except Exception:
-			changed = True
-		if changed:
-			invalidate(
-				run,
-				"Operational dependencies changed: "
-				+ (doc.doctype if doc else "AI evaluation runtime"),
-			)
-			invalidate_configuration(frappe.get_doc('AI Configuration', row.configuration, for_update=True))
+			current = None
+		changed = False
+		for row in runs:
+			run = frappe.get_doc("AI Evaluation Run", row.name, for_update=True)
+			if not available and run.status == "Passed":
+				# Withdrawal suspends operation while preserving evidence for recovery.
+				continue
+			if not matches_evaluation(run, profile, current):
+				invalidate(run, "Operational dependencies changed: " + (doc.doctype if doc else "AI evaluation runtime"))
+				changed = True
+		if changed and available and profile.status in ("Enabled", "Disabled") and not approval(profile)["approved"]:
+			invalidate_configuration(profile)

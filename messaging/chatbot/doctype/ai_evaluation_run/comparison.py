@@ -5,7 +5,7 @@ import json
 import re
 from uuid import uuid4
 
-from messaging.registrations import ai_providers as wire
+from messaging.registry import ai_providers as wire
 from messaging.chatbot.doctype.ai_evaluation_case.ai_evaluation_case import validate_extraction
 
 DECISION_FIELDS = ('flows', 'excluded_flows', 'greeting_detected', 'human_attention_requested', 'ambiguous', 'outcome')
@@ -45,10 +45,10 @@ def functional_scope(group, expected):
     return 'operational'
 
 
-def compare_decision(raw, request, refs, expected, minimum_confidence):
+def compare_decision(raw, request, refs, expected, minimum_confidence=None, *, policy=None):
     if isinstance(raw, (str, bytes, bytearray, dict)):
         raw = wire.deserialize_response(raw, request)
-    decision = normalize_response(raw, request, refs, minimum_confidence=minimum_confidence)
+    decision = normalize_response(raw, request, refs, minimum_confidence=minimum_confidence, policy=policy)
     normalized = {key: getattr(decision, key) for key in DECISION_FIELDS}
     differences = []
     for key in DECISION_FIELDS:
@@ -74,7 +74,7 @@ def compare_extraction(source, group, actual, expected):
 
 def protected_response(value, secrets):
     """Persist bounded diagnostics with credential reflections and credential keys removed."""
-    if type(value) in (wire.DecisionResponse, wire.ParameterExtractionResponse):
+    if type(value) in (wire.DecisionResponse, wire.DecisionEvidence, wire.ParameterExtractionResponse):
         value = wire.to_json(value)
     text = value.decode('utf-8', errors='replace') if isinstance(value, (bytes, bytearray)) else (
         value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=lambda _v: '[unsupported]'))

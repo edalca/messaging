@@ -1,5 +1,5 @@
 import inspect
-from messaging.registrations.processes import BotProcess, NotifyProcess
+from .contracts import BotProcess, NotifyProcess
 
 def validate_registration_schema(app, definitions):
     """Validate declarations and authorized function references before synchronization."""

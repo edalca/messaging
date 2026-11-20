@@ -208,8 +208,8 @@ def enqueue(state, requested, settings, *, menu_selection=None, human_attention=
 	for code in requested:
 		if (code in queued and not (human_attention or registration)) or not frappe.db.exists("Bot Flow", {"name": code, "status": "Enabled"}):
 			continue
-		from messaging.communication.doctype.process_definition.validation import test_state
-		if test_state(frappe.get_doc('Bot Flow', code), remember_invalid=True) != 'Passed':
+		from messaging.communication.doctype.process_definition.approval import is_current
+		if not is_current(frappe.get_doc('Bot Flow', code)):
 			continue
 		item = dict(flow=code, request_id=frappe.generate_hash(length=24), prompted=False, invalid_attempts=0, values={})
 		if human_attention:
@@ -273,8 +273,8 @@ def mechanical_menu_flows(settings):
 	result = []
 	for row in get_menu_flows(settings):
 		flow = frappe.get_doc("Bot Flow", row["workflow_code"])
-		from messaging.communication.doctype.process_definition.validation import test_state
-		if test_state(flow) != 'Passed':
+		from messaging.communication.doctype.process_definition.approval import is_current
+		if not is_current(flow):
 			continue
 		if not flow.has_permission("read"):
 			continue
@@ -414,8 +414,8 @@ def advance(contact, session, turn, state, request, settings, dispatch, *, allow
 				break
 		session.active_flow = flow.name
 		state["active_request"] = item["request_id"]
-		from messaging.communication.doctype.process_definition.validation import test_state
-		if flow.status != 'Enabled' or test_state(flow, remember_invalid=True) != 'Passed':
+		from messaging.communication.doctype.process_definition.approval import is_current
+		if flow.status != 'Enabled' or not is_current(flow):
 			messages.append(get_flow_effective_internal_error_message(flow))
 			decisions.append(dict(kind="Internal Error", flow=flow.name))
 			finish_flow(session, state, item, decisions, cancelled=True)

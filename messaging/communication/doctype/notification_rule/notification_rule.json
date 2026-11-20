@@ -12,7 +12,7 @@
   "source_doctype",
   "column_break_ajho",
   "notification_delay_minutes",
-  "enabled",
+  "status",
   "events_section",
   "events",
   "delivery_section",
@@ -28,9 +28,12 @@
   "process_flow_tab",
   "section_break_process",
   "process_definition",
-  "process_test_status",
   "process_test_checked_by",
-  "process_test_fingerprint",
+  "approval_hash",
+  "approved_process_revision",
+  "approved_contract_hash",
+  "approved_delivery_hash",
+  "approval_invalidation",
   "column_break_fckh",
   "process_method",
   "process_invocation_mode",
@@ -94,12 +97,15 @@
    "reqd": 1
   },
   {
-   "default": "0",
-   "fieldname": "enabled",
-   "fieldtype": "Check",
+   "default": "Untested",
+   "fieldname": "status",
+   "fieldtype": "Select",
    "in_list_view": 1,
-   "label": "Enabled",
-   "read_only": 1
+   "label": "Status",
+   "options": "Untested\nDisabled\nEnabled\nUnavailable",
+   "reqd": 1,
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "events_section",
@@ -122,7 +128,7 @@
    "fieldname": "account",
    "fieldtype": "Link",
    "label": "Communication Channel Account",
-   "mandatory_depends_on": "eval:doc.enabled",
+   "mandatory_depends_on": "eval:doc.status == 'Enabled'",
    "options": "Communication Channel Account"
   },
   {
@@ -167,7 +173,8 @@
    "fieldtype": "Link",
    "label": "Process Definition",
    "options": "Process Definition",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "default": "Internal Call (frappe.call)",
@@ -183,7 +190,7 @@
    "fieldname": "process_method",
    "fieldtype": "Data",
    "label": "Process Method Path",
-   "mandatory_depends_on": "eval:doc.enabled",
+   "mandatory_depends_on": "eval:doc.status == 'Enabled'",
    "read_only": 1
   },
   {
@@ -233,20 +240,42 @@
    "options": "Communication Provider Value"
   },
   {
-   "default": "Untested",
-   "fieldname": "process_test_status",
-   "fieldtype": "Select",
+   "fieldname": "approval_hash",
+   "fieldtype": "Data",
    "hidden": 1,
-   "label": "Process Test Status",
+   "label": "Approval Hash",
    "no_copy": 1,
-   "options": "Untested\nPassed\nFailed",
    "read_only": 1
   },
   {
-   "fieldname": "process_test_fingerprint",
+   "fieldname": "approved_process_revision",
    "fieldtype": "Data",
    "hidden": 1,
-   "label": "Test Configuration Fingerprint",
+   "label": "Approved Process Revision",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_contract_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Approved Contract Hash",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_delivery_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Approved Delivery Hash",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_invalidation",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Approval Invalidation",
    "no_copy": 1,
    "read_only": 1
   },

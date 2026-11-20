@@ -42,7 +42,7 @@ from messaging.chatbot.doctype.bot_settings.localization import (
 	UNSAFE_ERROR_MESSAGE_PATTERNS,
 	validate_safe_error_message,
 )
-from messaging.common.locking import document_savepoint, lock_document_types, shared_document
+from messaging.common.locking import document_savepoint, lock_document_types
 from messaging.common.write_guards import InternalWriteGuard
 from messaging.communication.doctype.communication_template.communication_template import (
 	 SIMPLE_VARIABLE_PATTERN,
@@ -53,29 +53,17 @@ from messaging.communication.doctype.communication_template.communication_templa
 	validate_template,
 	validate_template_syntax,
 )
-from messaging.communication.doctype.process_definition import validation
-from messaging.registrations.processes import BotProcess, STATUS_CODE_PATTERN, SUPPORTED_PROCESS_SCHEMA_VERSION, validate_captured_process_argument, validate_output_data, validate_process_schema_v1
+from messaging.communication.doctype.process_definition import approval, validation
+from messaging.registry.processes import BotProcess, STATUS_CODE_PATTERN, SUPPORTED_PROCESS_SCHEMA_VERSION, validate_captured_process_argument, validate_output_data, validate_process_schema_v1
 from messaging.communication.doctype.process_definition.process_definition import (
     bind_definition,
     resolve_definition,
 )
 from messaging.security.permissions import require_system_manager
 
-_lifecycle_write = InternalWriteGuard("messaging_bot_flow_lifecycle")
-
 VALID_INVOCATION_MODES = ("Internal Call (frappe.call)",)
 VALID_OUTPUT_MODES = ("Template", "Message")
 
-
-def invalidate_process_approval(definition, method=None):
-	previous = definition.get_doc_before_save()
-	if not previous or (previous.capability_revision, previous.status) == (definition.capability_revision, definition.status):
-		return
-	for name in frappe.get_all('Bot Flow', filters={'process_definition': definition.name}, pluck='name'):
-		flow = frappe.get_doc('Bot Flow', name, for_update=True)
-		validation.clear_approval(flow)
-		frappe.db.set_value('Bot Flow', name,
-			dict(status='Disabled', **{key: flow.get(key) for key in validation.RECEIPT_FIELDS}))
 
 CANONICAL_WORKFLOW_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 PYTHON_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
@@ -88,7 +76,7 @@ class ProcessContractViolationError(frappe.ValidationError):
 _preset_write = InternalWriteGuard("messaging_bot_flow_provenance")
 
 
-class BotFlow(Document):
+class BotFlow(approval.ProcessConsumer):
 	def _protect_application(self):
 		if not _preset_write.active():
 			previous = None if self.is_new() else frappe.get_doc('Bot Flow', self.name)
@@ -105,42 +93,21 @@ class BotFlow(Document):
 		if self.is_new() and self.application and self.application not in frappe.get_installed_apps():
 			raise frappe.PermissionError(_("Registration owner must be an installed application."))
 
-	def onload(self):
-		# The stored Status preserves activation; Desk shows current effective readiness.
-		self.status = self.lifecycle_status
-		self.set_onload(
-			"flow_lifecycle",
-			dict(lifecycle_status=self.status, verification_error=self.flags.process_verification_error),
-		)
-
-	def test_state(self, *, remember_invalid=False):
-		return validation.test_state(self, remember_invalid=remember_invalid)
-
-	def require_approved(self):
-		return validation.require_approved(self)
-
-	def runtime_evidence(self, definition, *, administrative_test=False):
-		return validation.runtime_evidence(self, definition, administrative_test=administrative_test)
-
 	def resolve_output(self, raw_response):
 		return resolve_flow_output(self, raw_response)
 
 	def validate_runtime_arguments(self, arguments):
 		return validate_runtime_arguments(self, arguments)
 
-	def _allows_receipt_promotion(self):
-		return _lifecycle_write.active()
-
 	def _validate_process_candidate(self):
 		self.normalize_configuration()
-		self.validate_configuration()
-		self._validate_outputs_configuration(require_templates=True)
+		self.validate_configuration(require_templates=True)
 		if not self.process_method:
 			frappe.throw(_("Process Method Path is required."))
 		if not self.outputs:
 			frappe.throw(_("At least one functional Output must be configured for the Flow."))
 
-	def _consumer_fingerprint(self, *, include_schedule=True):
+	def _consumer_fingerprint(self):
 		settings = get_bot_settings()
 		config = dict(validation._fields(self, validation.FLOW_FIELDS))
 		config["process_contract"] = self.get("process_contract")
@@ -196,7 +163,7 @@ class BotFlow(Document):
 		]
 		config["templates"] = {
 			row.template_reference: template_contract(
-				shared_document("Bot Flow Template", row.template_reference)
+				frappe.get_doc("Bot Flow Template", row.template_reference)
 			)
 			for row in self.get("output_translations") or []
 			if row.get("template_reference")
@@ -205,37 +172,19 @@ class BotFlow(Document):
 				for output in self.outputs
 			)
 		}
-		config["transitions"] = validation._fields(
-			settings, ("max_invalid_attempts", "show_menu_on_attempts_exhausted")
-		)
 		config["languages"] = sorted(
 			(r.language, int(r.is_default)) for r in settings.chatbot_languages if r.enabled
 		)
 		return config
 
-	@property
-	def lifecycle_status(self):
-		tested = self.test_state(remember_invalid=True)
-		if tested == "Unavailable":
-			return "Unavailable"
-		if tested != "Passed":
-			return "Untested"
-		return "Enabled" if self.status == "Enabled" else "Disabled"
-
-	def _protect_activation(self):
-		if _lifecycle_write.active():
-			return
-		previous = self.get_doc_before_save()
-		activation = previous.status if previous else "Disabled"
-		if self.status in ("Untested", "Unavailable"):
-			self.status = activation
-		if self.status != activation:
-			raise frappe.PermissionError(_("Use Activate or Deactivate to change the Flow state."))
-
-	def before_validate(self) -> None:
+	def before_validate(self):
 		self._protect_application()
-		self._protect_activation()
+		approval.protect(self)
 		self.normalize_configuration()
+
+	def _validate_activation(self):
+		flow_messages.require_default_language(self)
+		get_bot_settings().require_operational_configuration(flow=self.name)
 
 	def normalize_configuration(self) -> None:
 		if self.workflow_code:
@@ -253,10 +202,19 @@ class BotFlow(Document):
 
 	def validate(self) -> None:
 		self._protect_application()
-		self.validate_configuration()
-		validation.validate_readiness(self, enabled=self.status == "Enabled")
+		if self.status == "Unavailable" and not approval.fields_changed(
+			self, "process_definition", "parameters", "outputs", "output_translations"
+		):
+			flow_messages.require_default_language(self)
+			self._validate_identity_and_semantics()
+			self._validate_priority_rules(has_params=bool(self.parameters))
+			self._validate_internal_error_configuration()
+			validate_translations(self)
+		else:
+			self.validate_configuration()
+		approval.check_save(self)
 
-	def validate_configuration(self) -> None:
+	def validate_configuration(self, *, require_templates=False) -> None:
 		settings = get_bot_settings(shared=True)
 		if not validate_chatbot_languages(settings):
 			frappe.throw(_("Configure an enabled default language in Bot Settings before creating a Bot Flow."))
@@ -268,7 +226,7 @@ class BotFlow(Document):
 		self._validate_priority_rules(has_params=bool(param_docs))
 		self._validate_input_configuration(param_docs=param_docs)
 		self._validate_process_configuration()
-		self._validate_outputs_configuration()
+		self._validate_outputs_configuration(require_templates=require_templates)
 		self._validate_internal_error_configuration()
 		validate_translations(self)
 		settings.validate_registration_flow(self)
@@ -484,7 +442,7 @@ class BotFlow(Document):
 			)
 
 	def _validate_process_configuration(self) -> None:
-		bind_definition(self)
+		bind_definition(self, allow_retired=True)
 
 		if self.process_invocation_mode not in VALID_INVOCATION_MODES:
 			frappe.throw(
@@ -504,9 +462,7 @@ class BotFlow(Document):
 
 	def _validate_outputs_configuration(self, *, require_templates=False) -> None:
 		rows = self.outputs or []
-		if not rows and self.status != "Enabled":
-			return
-		if not rows:
+		if require_templates and not rows:
 			frappe.throw(
 				_("At least one functional Output must be configured for the Flow."),
 				frappe.ValidationError,
@@ -552,8 +508,7 @@ class BotFlow(Document):
 			if row.output_mode == "Template":
 				language = validate_chatbot_languages(get_bot_settings())
 				if (
-					self.status != "Enabled"
-					and not require_templates
+					not require_templates
 					and not any(
 						translation.status_code == status_code and translation.template_reference
 						for translation in self.output_translations or []
@@ -749,72 +704,16 @@ def available_process_definitions(doctype, txt, searchfield, start, page_len, fi
 
 @frappe.whitelist(methods=["POST"])
 def validate_process(candidate):
-	flow = validation._configuration(candidate, for_update=True, persisted_only=True)
-	if flow.doctype != "Bot Flow":
-		raise frappe.PermissionError(_("Invalid Process source"))
-	if validation.test_state(flow, remember_invalid=True) == "Passed":
-		raise frappe.ValidationError(_("This Flow already has a current validation."))
-	savepoint = "validate_flow_" + frappe.generate_hash(length=8)
-	frappe.db.savepoint(savepoint)
-	try:
-		with _lifecycle_write():
-			result = validation.test_method(flow.as_dict())
-			flow.status = "Enabled" if result["status"] == "Passed" else "Disabled"
-			flow.save()
-			if result["status"] == "Passed":
-				get_bot_settings().require_operational_configuration(flow=flow.name)
-				validation.require_approved(flow)
-		return dict(
-			result,
-			lifecycle_status="Enabled" if result["status"] == "Passed" else flow.lifecycle_status,
-		)
-	except Exception:
-		frappe.db.rollback(save_point=savepoint)
-		raise
+	name, modified = validation.action_identity(candidate, "Bot Flow")
+	get_bot_settings(for_update=True, shared=True)
+	return approval.validate("Bot Flow", name, modified, validation.run_test)
 
 
 @frappe.whitelist(methods=["POST"])
 def set_active(candidate, active):
-	if type(active) not in (int, bool, str) or active not in (0, 1, "0", "1"):
-		raise frappe.ValidationError(_("Invalid Flow activation."))
-	active = int(active)
-	flow = validation._configuration(candidate, for_update=True, persisted_only=True)
-	if flow.doctype != "Bot Flow":
-		raise frappe.PermissionError(_("Invalid Process source"))
-	if active:
-		flow_messages.require_default_language(flow)
-		validation.require_approved(flow)
-		from messaging.registry.processes.discovery import verify_registered_revision
-		verify_registered_revision(bind_definition(flow))
-	savepoint = "activate_flow_" + frappe.generate_hash(length=8)
-	frappe.db.savepoint(savepoint)
-	try:
-		with _lifecycle_write():
-			# The saved configuration already passed validation. Change only
-			# activation after checking its current receipt and availability.
-			flow.db_set("status", "Enabled" if active else "Disabled")
-			if active:
-				get_bot_settings().require_operational_configuration(flow=flow.name)
-	except Exception:
-		frappe.db.rollback(save_point=savepoint)
-		raise
-	return dict(lifecycle_status="Enabled" if active else flow.lifecycle_status)
-
-
-@frappe.whitelist()
-def state(name):
-	require_system_manager()
-	flow = frappe.get_doc("Bot Flow", name)
-	flow.check_permission("read")
-	tested = validation.test_state(flow, remember_invalid=True)
-	return dict(
-		lifecycle_status=("Enabled" if flow.status == "Enabled" else "Disabled")
-		if tested == "Passed"
-		else "Unavailable"
-		if tested == "Unavailable"
-		else "Untested",
-		verification_error=flow.flags.process_verification_error,
-	)
+	name, modified = validation.action_identity(candidate, "Bot Flow")
+	get_bot_settings(for_update=True, shared=True)
+	return approval.set_active("Bot Flow", name, modified, active)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -857,7 +756,7 @@ def apply_default(definition, doc, available, discovered, *, app, replace_common
 			"workflow_code": definition["key"].replace(".", "_"),
 			"workflow_name": definition["name"],
 			"process_definition": definition["process"],
-			"status": "Disabled",
+			"status": "Untested",
 			**(dict(priority=0, show_in_menu=False, menu_order=0, use_custom_internal_error_message=False) | definition.get("options", {})),
 		})
 	doc.check_permission("create" if new else "write")

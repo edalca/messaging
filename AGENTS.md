@@ -22,7 +22,7 @@ framework metadata. Check consumers and stored references before changing it.
 
 ## Modules and ownership
 
-[modules.txt](messaging/modules.txt) lists the four Frappe modules. Messaging
+[modules.txt](messaging/modules.txt) lists the five Frappe modules. Messaging
 declares `required_apps = []`. Business processes and external adapters belong
 to the applications that implement them.
 
@@ -32,6 +32,7 @@ to the applications that implement them.
 | [Chatbot](messaging/chatbot/) | Bot Settings, Bot Parameters and their capture engine, Bot Flows and presets, Bot Flow Templates, Bot Dispatch and quotas, AI Provider, AI Configuration and evaluation documents |
 | [Conversation](messaging/conversation/) | Chat Contact, Chat Session, Chat Turn and Chat Message, Chat Agent, conversation preferences, inbox, history and human support |
 | [Emulator](messaging/emulator/) | EMULR adapter, fictional Emulator Contacts and Chat Emulator |
+| [WhatsApp](messaging/whatsapp/) | Meta Cloud API adapter, webhook and administration |
 
 The native [Dock](messaging/dock/messaging/messaging.json) orders Conversation,
 Chatbot, and Communication. Each uses its declarative Sidebar. Conversation
@@ -45,7 +46,7 @@ with the owning DocType. Cross-DocType consumers reuse those operations.
 Functional module root files are internal unless they expose an explicit shared
 boundary. Keep shared primitives in
 `messaging.common`, authorization and scoped identities in `messaging.security`,
-public declarations in `messaging.registrations`, and lifecycle declarations in
+public declarations in `messaging.registry`, and lifecycle declarations in
 `messaging.presets`. Avoid cycles, duplicate engines, and runtime dependencies on
 preset declarations. Inspect a capability and its callers before adding another
 implementation of permission checks, account resolution, locks, capture, language
@@ -57,9 +58,9 @@ There are three technical registry categories.
 
 | Catalog | Public declaration module | Operational owner |
 | --- | --- | --- |
-| Process Definition | [messaging.registrations.processes](messaging/registrations/processes/) | [Process Definition](messaging/communication/doctype/process_definition/) |
-| AI Provider | [messaging.registrations.ai_providers](messaging/registrations/ai_providers/) | [AI Provider](messaging/chatbot/doctype/ai_provider/) and [AI Configuration](messaging/chatbot/doctype/ai_configuration/) |
-| Communication Provider | [messaging.registrations.communication_providers](messaging/registrations/communication_providers/) | [Communication Provider](messaging/communication/doctype/communication_provider/) |
+| Process Definition | [messaging.registry.processes](messaging/registry/processes/) | [Process Definition](messaging/communication/doctype/process_definition/) |
+| AI Provider | [messaging.registry.ai_providers](messaging/registry/ai_providers/) | [AI Provider](messaging/chatbot/doctype/ai_provider/) and [AI Configuration](messaging/chatbot/doctype/ai_configuration/) |
+| Communication Provider | [messaging.registry.communication_providers](messaging/registry/communication_providers/) | [Communication Provider](messaging/communication/doctype/communication_provider/) |
 
 An installed application declares capabilities in its own code. Its single
 `messaging_registry` hook calls `messaging.registry.register_registry(app=...,
@@ -85,7 +86,7 @@ dependent profiles. Runtime resolves current verified implementations.
 
 1. **Install.** `after_install` prepares roles and the service identity, calls
    `synchronize_registry()`, and provisions the native Bot Flow Presets and AI
-   Evaluation catalogs. The native technical declarations include EMULR and the
+   Evaluation catalogs. The native technical declarations include EMULR, WhatsApp and the
    three processes `messaging.registration`, `messaging.greeting`, and
    `messaging.human_availability`. The installed providers and business
    processes of other apps come from their own hooks.
@@ -151,7 +152,7 @@ for document defaults and avoid destructive schema work in lifecycle hooks.
 
 ## Process contract and approvals
 
-`messaging.registrations.processes` exports `BotProcess`, `NotifyProcess`,
+`messaging.registry.processes` exports `BotProcess`, `NotifyProcess`,
 their typed builders, requests and responses, and reference types.
 `messaging.registry.processes.register_processes` exposes direct owner
 registration. A `definition(*, params, outcomes)` declares the contract, and
@@ -160,7 +161,7 @@ discovery calls the definition with guarded reads and side effects restricted.
 The Process Runtime alone invokes the business handler.
 
 ```python
-from messaging.registrations.processes import (
+from messaging.registry.processes import (
     BotParams,
     BotProcess,
     BotRequest,
@@ -200,12 +201,13 @@ process = BotProcess(id="example.reference", label="Reference lookup",
   `source`, `event`, `channel`, and `account`. References keep native
   permission checks on access. `NotifyNoResponse` completes without a
   functional result or queue entry.
-- Process Schema v1 has exactly `version`, `status`, `recipient`, `data`, and
-  `message`. `version` is the integer `1`. `status` is a declared functional
-  outcome, `recipient` and `message` are strings, and `data` is a flat mapping of
-  finite JSON scalars. Validate it at the existing shared boundary. Notification
-  extracts a declared recipient for delivery, while its rule controls the
-  account and template. A technical failure is handled separately.
+- Process Schema v1 requires exactly `version`, `status`, `recipient`, `data`,
+  and `message`. `version` is the integer `1` and `status` is a nonempty,
+  declared functional outcome. `recipient` and `message` can be empty strings.
+  `data` can be empty and each supplied scalar value must match its declaration.
+  Consumers require the fields their selected action or template uses.
+  Notification extracts a supplied, declared recipient for delivery. A rule
+  controls the account, destination policy, and template.
 
 [execution.py](messaging/communication/doctype/process_definition/execution.py)
 owns `execute_process`. It reloads the persisted consumer, resolves the
@@ -228,14 +230,22 @@ a consumer or projecting its contract reads the persisted definition.
 Desk projects registered contracts into configuration. A Bot Flow binds a
 single available `bot_flow` Process Definition, unique across flows. A
 Notification Rule binds a `notification` definition. Persisted definitions
-supply derived routes and typed input and output metadata. Saving validates
-structure. Explicit Validate, Enable, and Disable actions enforce permissions and
-current evidence. Flow validation is structural and does not invoke the business
-handler. Notification Rule validation requires evidence for each configured
-condition. Keep evidence and historical logs immutable, and reject stale
-revisions during execution. Technical edits invalidate affected approvals. The
-Bot Flow structural fingerprint excludes presentation text. Notification
-template content revisions are delivery dependencies.
+supply derived routes and typed input and output metadata. Saving checks
+document integrity. The shared
+[approval boundary](messaging/communication/doctype/process_definition/approval.py)
+owns the read-only `status` of both consumers. New documents start `Untested`.
+Validate checks the saved contract and issues a receipt in `Disabled`. Enable
+requires the current receipt and operational dependencies. Disable keeps the
+receipt. The registered capability revision identifies the Process contract and
+implementation. The execution runtime tracks its deployment manifest independently.
+A change to the registered revision or availability invalidates only consumers
+with an affected receipt and records the cause under `Unavailable`. Material
+consumer changes also withdraw approval. Validate returns the document to
+`Disabled`. The exclusive validation action checks the stored conditions and
+bindings without invoking a business handler. Keep historical logs immutable.
+Bot Flow approval excludes presentation text. Notification Rule delivery
+approval includes recipient policy and the published template revision. Delay
+changes leave the receipt and previously prepared queue entries intact.
 
 ## Bot configuration and localization
 
@@ -312,12 +322,24 @@ document name. The channel/account key is also protected by uniqueness. Preserve
 account and channel identities and historical links.
 
 The Communication Provider controller owns availability and the protected
-administrative `enabled` field. Its `set_provider_enabled` action requires POST,
-System Manager, and document access. A usable binding requires current installed
-code, availability, provider/channel/account enablement, and valid settings.
+administrative `status` field. Its `set_provider_enabled` action requires POST,
+System Manager, and document access. Communication Channel owns its own
+`status` and updates it via `set_channel_status` with the same requirements.
+A usable binding requires current installed code, availability, an Enabled
+provider and channel, an enabled account, and valid settings.
 `single_channel` counts existing channels, including disabled ones.
 `fixed_channel_id` controls the first channel name when supplied. The common
 channel controller enforces both with native validation and locks.
+
+Keep each Communication Provider's declared revision in its own `version.py`
+within the provider module. The declaration reads that file for
+`CommunicationProvider.version`. EMULR and WhatsApp use
+[`messaging/emulator/version.py`](messaging/emulator/version.py) and
+[`messaging/whatsapp/version.py`](messaging/whatsapp/version.py), respectively.
+The Messaging application release version is independent of provider revisions.
+During development, use release candidate versions. Messaging and its bundled
+providers will start the stable series at `16.0.0`. After that baseline,
+advance each provider's version independently when its own changes warrant it.
 
 Provider parameters use the exact scopes Channel, Account, Template, and
 Notification Rule. They use the supported Data, Small Text, Password, Check,
@@ -361,6 +383,19 @@ In particular:
    a resend. Provider templates, template status, required redirection, and
    notification validation are explicit capabilities and operations. Consult the
    declaration and current owner before implementing them.
+
+Authorized administrators generate the webhook verify token explicitly on a
+saved WhatsApp channel. A channel shares that token across the associated Meta
+numbers. Administrators can copy or rotate it through the channel actions.
+The Meta App Secret authenticates signed POST events. The native WhatsApp
+declaration uses the Phone Number ID as the Messaging
+account ID and binds signed inbound events to both the channel and WABA.
+Delivery reports correlate through Meta's opaque callback data or an existing
+transport reference and update the originating Bot Dispatch or Notification
+Queue. Signed template notifications schedule a scoped reread of Meta's current
+status. Communication Template owns the persisted readings. The optional
+`mark_incoming_read` operation receives evidence from the bot processing
+boundary or the assigned agent's native read cursor.
 
 [security](messaging/security/) owns the common service identity, authorization,
 and scoped context restoration. Setup provision and read-only runtime
@@ -423,19 +458,37 @@ Use the existing contact locks, durable checkpoints, and unique keys.
 localized content linked from Bot Flow. It has language, enablement, content
 components, variables and revision. It has no account or provider scope.
 [Communication Template](messaging/communication/doctype/communication_template/)
-is a notification template linked to one Communication Channel, with explicit
-language and Active or Inactive state. Managed activation uses `set_active`.
-The provider is derived from the channel. Template parameters and an optional
-provider status belong to that scope. Deactivation checks active rule
-references. Notification delivery checks current content and provider revisions.
+belongs to a Communication Channel and, for providers declaring Account scope,
+a Communication Channel Account. Its deterministic name includes the scope
+before the normalized descriptive name and language. Administrative activation
+uses `set_active`. Providers with external locale identifiers declare
+`template_languages` as `TemplateLanguage(code, label, language=None)` entries.
+The optional `language` is an explicit Frappe Language mapping. Template
+identity and external projections use the exact `provider_language`; the native
+`language` remains editable for notification presentation. Resolution checks
+enabled explicit and conventional matches, then the site-wide Bot Settings
+default. Persisted manual and provisional assignments survive subsequent
+reads. Registered templates can specify a `provider_languages` mapping keyed
+by their native content language when materializing into one of these channels.
+A provider can declare external template states and the
+`can_send` policy, and use `template_available` for extra availability conditions.
+Local Channel templates render their saved content. Externally managed
+templates keep a local draft, the latest provider reading, and an independently
+verified snapshot containing the external identity, scope, content, and
+parameter mapping. An ordinary save changes the draft. Import reads a complete
+external scope, and publication submits a draft only after an explicit
+administrative action with a durable claim. A provider can share an external
+scope across several native bindings. A webhook requests a fresh scoped read. Legacy status rows remain readable.
+Delivery requires the current published snapshot contract.
 
-Communication Template's shared rendering code validates the native
-`header`, `body`, `footer`, and `template_variables` representation. Keep
-literal, single-pass interpolation with exact declared snake_case variables,
-and retain the provider-specific limits and checks. Template content must
-match its owner's usage and language. A notification outcome links directly to
-one Communication Template. Its language comes from that document, independently
-of chatbot languages, and its channel must match the rule account.
+Communication Template validates the native `header`, `body`, `footer`, and
+`template_variables` representation. Keep literal, single-pass interpolation
+with exact declared snake_case variables and provider component limits. A
+notification outcome links to a template compatible with the rule's account.
+Its language comes from the template independently of chatbot languages.
+External output validation and delivery use the published parameter mapping.
+A changed external revision requires revalidation. Pending delivery retains
+its original revision and waits if that revision is unavailable.
 
 The notification path is document event → Notification Rule → shared Process
 Runtime and process log → Notification Queue → dispatcher → neutral transport.
@@ -449,7 +502,7 @@ Runtime and process log → Notification Queue → dispatcher → neutral transp
   values. Inputs use typed fixed values or allowed source fields. A Send outcome
   needs a compatible template and required variables. Event or delivery
   identities, and first account binding, follow the controller's immutability
-  checks. New rules remain disabled pending approval.
+  checks. New rules remain Untested pending approval.
 - [events.py](messaging/communication/doctype/notification_rule/events.py) uses
   the global `doc_events` hook and a fast enabled-rule filter. Preparation,
   unique occurrence claim, execution evidence and queue snapshot participate
@@ -464,8 +517,13 @@ Runtime and process log → Notification Queue → dispatcher → neutral transp
   template revision, rendered content and schedule. The rule delay defaults
   to 60 minutes for new rules and is measured in site-local time. Changing a
   rule's delay leaves prepared dates intact. Redirection follows declared
-  capabilities and the rule's own configuration. Notification Process
-  preparation and revalidation must be repeatable and free of external effects.
+  capabilities and replaces the original destination. The registered provider
+  resolves and validates the destination selected by the rule. A missing or
+  invalid destination suppresses delivery while preserving the functional
+  outcome in the execution log. Provider template adaptations apply to the
+  transport payload. The queue retains the original template values.
+  Notification Process preparation and revalidation must be repeatable and
+  free of external effects.
 - `dispatch.dispatch_due` claims due work and checks scope, configured rule
   and current approval, original occurrence, document and delivery
   dependencies before sending the stored snapshot. Open conversation or human
@@ -482,14 +540,32 @@ evidence. Subsequent delivery updates remain separate from the send lifecycle.
 
 ## AI interpretation and evaluation
 
-The public [AI contracts](messaging/registrations/ai_providers/) define typed
-Decision and Parameter Extraction requests and responses and their v1 wire
-format. Approved, available Decision profiles can interpret new requests.
+The public [AI contracts](messaging/registry/ai_providers/) define typed
+Decision and Parameter Extraction requests and responses. Approved, available
+Decision profiles can interpret new requests.
 Extraction has a contract and generic execution entry point. Conversational
 capture remains deterministic, and the Extraction evaluation worker reports
 that capability as unavailable. Internal providers resolve verified installed
-code. External providers use the HTTPS transport in
-[AI Configuration execution](messaging/chatbot/doctype/ai_configuration/execution.py).
+code. External providers use an HTTPS POST to the profile's `endpoint`. The
+[REST representation](messaging/registry/ai_providers/rest.py) selects
+`decision-v2` or `parameter-extraction-v2` by profile purpose and preserves
+the typed schema version independently.
+
+Decision operations return `DecisionEvidence` with one
+`DecisionClassificationResult` per offered flow reference and each offered
+signal (`greeting`, `human_attention`). Classifications are `request`,
+`absent`, `excluded`, and `unclear`. Confidence and distribution scores may
+be omitted and remain unknown. Messaging applies the Decision profile's
+reserved acceptance thresholds and decides which flows to run. Internal
+provider options use a separate, read-only mapping. REST can transmit declared
+non-secret scalars marked `send_to_rest` in the separate `provider_parameters`
+object. Keep connection settings and the native acceptance criteria out of it.
+
+Parameter Extraction uses its own validator and typed observations.
+It can include parameter descriptions, bounded context and optional evidence.
+Exact decimal values are strings and dates use canonical ISO format. Messaging
+preserves deterministic capture and has no conversational extraction executor.
+Extraction profiles declare no shared acceptance thresholds.
 
 [Bot Settings interpretation](messaging/chatbot/doctype/bot_settings/interpretation.py)
 constructs the shared request. It recognizes and substitutes configured values
@@ -498,16 +574,27 @@ with localized labels and context. Validate response type, version, request
 correlation, outcome, permitted references and confidence before using it.
 Greeting and human attention are separate signals. The decision cannot select
 parameter values, authorize a transfer, or invoke a Process directly. Retain
-complete capture and menu validation. The [wire validator](messaging/registrations/ai_providers/wire.py)
+complete capture and menu validation. The [wire validator](messaging/registry/ai_providers/wire.py)
 is the source for closed payload fields, supported outcomes, and limits. The
 request's opaque references are valid only in that request.
 
 AI Configuration owns profile values, identity, connectivity, and approval
 gates. Saving or reading a configuration never performs a provider call.
+AI Profile is the Desk label for the AI Configuration DocType. Its read-only
+Status starts Untested. A successful explicit technical evaluation enables it.
+Disabling keeps the approval and permits explicit reactivation while evidence
+is current. Material changes and confirmed failures withdraw availability.
+Transient connection errors update diagnostics and preserve approval.
+The Code-First registry manages internal AI Provider availability. External
+REST providers retain administrator-managed availability. Provider withdrawal
+suspends affected profiles and preserves evaluation evidence. A returning
+provider can restore an approved profile to Disabled for explicit activation.
 Connection testing is an explicit administrative action. It checks connectivity
 and the wire contract. AI Provider parameters and credentials remain scoped to
 the executor. HTTPS connections enforce destination and certificate validation
-with bounded payloads, timeouts, and no automatic retry or redirect. Private
+with bounded payloads and no automatic retry or redirect. The one-shot
+[transport](messaging/chatbot/doctype/ai_configuration/rest_transport.py)
+bounds DNS and blocking HTTPS operations with a subprocess deadline. Private
 host allowlisting is a site configuration decision. AI Request Log holds
 restricted, redacted diagnostic evidence. Never log credentials or full
 unfiltered requests.

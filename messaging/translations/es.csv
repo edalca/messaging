@@ -587,6 +587,15 @@ Add emulator contact,Agregar contacto emulado
 An emulator contact with conversation history cannot be deleted.,No se puede eliminar un contacto emulado con historial conversacional.
 Application,Aplicación
 Channel Name,Nombre del canal
+Channel Name is required.,El nombre del canal es obligatorio.
+Channel Name may contain only letters and spaces.,El nombre del canal solo puede contener letras y espacios.
+A channel with this ID already exists.,Ya existe un canal con este ID.
+The channel identity must match Channel Name.,La identidad del canal debe coincidir con el nombre del canal.
+Meta Webhook,Webhook de Meta
+Webhook URL,URL del webhook
+Callback URL,URL de callback
+Copy URL,Copiar URL
+Meta needs a public HTTPS URL that is accessible from the internet. Configure the site host name to show the callback URL.,Meta necesita una URL HTTPS pública accesible desde Internet. Configure el nombre de host del sitio para mostrar la URL de callback.
 Channel identity is immutable.,La identidad del canal es inmutable.
 Channel provider identity is immutable.,La identidad del proveedor del canal es inmutable.
 Check,Casilla
@@ -738,6 +747,7 @@ after_insert,Después de insertar
 on_update,Al actualizar
 on_submit,Al confirmar
 on_cancel,Al cancelar
+on_update_after_submit,Al actualizar después de confirmar
 Unsupported Process invocation mode.,Modo de invocación de Process no admitido.
 Search contacts,Buscar contactos
 Name or fictitious number,Nombre o número ficticio
@@ -869,6 +879,13 @@ Active AI Configuration,Perfil de IA activo
 Only a successfully validated configuration can be selected. No automatic fallback.,Solo puede seleccionarse un perfil validado correctamente. No hay sustitución automática.
 One supported capability per line.,Una capacidad compatible por línea.
 REST Endpoint,Endpoint REST
+REST Service URL,URL del servicio REST
+"HTTPS URL required for connection checks, evaluation, and use. Drafts can be saved without it.","URL HTTPS obligatoria para comprobar la conexión, evaluar y usar el perfil. Puede guardar borradores sin este valor."
+Send in REST Request,Enviar en la solicitud REST
+Include this non-secret parameter in the JSON request body.,Incluye este parámetro no secreto en el cuerpo JSON de la solicitud.
+Set the REST service URL on each AI profile.,Establezca la URL del servicio REST en cada perfil de IA.
+Connection parameters cannot be included in the REST request body.,El cuerpo de la solicitud REST no admite parámetros de conexión.
+Decision acceptance settings require a Decision profile.,La configuración de aceptación de decisiones requiere un perfil de decisión.
 Authentication,Autenticación
 Username,Usuario
 Credential,Credencial
@@ -2689,3 +2706,198 @@ You have added languages that are not saved yet. Save Bot Settings first and try
 Save languages,Guarda los idiomas
 Configure at least one enabled default language in the General tab and save the changes before adding default flows.,Debes configurar al menos un idioma habilitado y predeterminado en la pestaña General y guardar los cambios antes de agregar los flujos predeterminados.
 Language required,Idioma requerido
+Meta App Secret,Secreto de la aplicación de Meta
+Webhook Verify Token,Token de verificación del webhook
+Graph API Version,Versión de Graph API
+WhatsApp Business Account ID,ID de la cuenta de WhatsApp Business
+Meta Access Token,Token de acceso de Meta
+Meta Template Name,Nombre de la plantilla de Meta
+Meta Template Language,Idioma de la plantilla de Meta
+Invalid WhatsApp template component.,Componente de plantilla de WhatsApp no válido.
+Invalid WhatsApp template identity.,Identidad de plantilla de WhatsApp no válida.
+WhatsApp templates require a nonempty body.,Las plantillas de WhatsApp requieren un cuerpo con contenido.
+Invalid WhatsApp account configuration.,Configuración de cuenta de WhatsApp no válida.
+Meta could not complete the WhatsApp operation.,Meta no pudo completar la operación de WhatsApp.
+Invalid WhatsApp operation.,Operación de WhatsApp no válida.
+Select a WhatsApp template identity and category.,Seleccione la identidad y la categoría de la plantilla de WhatsApp.
+Enter an example for each WhatsApp template variable.,Ingrese un ejemplo para cada variable de la plantilla de WhatsApp.
+The selected WhatsApp template operation does not match its remote state.,La operación seleccionada no coincide con el estado de la plantilla en Meta.
+Invalid WhatsApp Graph API version.,Versión de Graph API para WhatsApp no válida.
+Meta App ID,ID de la aplicación de Meta
+Enter the Meta App ID before enabling the WhatsApp channel.,Ingrese el ID de la aplicación de Meta antes de habilitar el canal de WhatsApp.
+Use a numeric Meta App ID.,Use un ID numérico para la aplicación de Meta.
+This Meta App ID is already configured on another WhatsApp channel.,Este ID de aplicación de Meta ya está configurado en otro canal de WhatsApp.
+Use numeric Meta IDs for the WhatsApp account and WABA.,Use los identificadores numéricos de Meta para el número y la cuenta de WhatsApp Business.
+Publish to Meta,Publicar en Meta
+Save the template before publishing it to Meta.,Guarde la plantilla antes de publicarla en Meta.
+Meta Template Category,Categoría de la plantilla de Meta
+Variable Examples (JSON),Ejemplos de variables (JSON)
+Update existing Meta template,Actualizar la plantilla existente en Meta
+WhatsApp Actions,Acciones de WhatsApp
+Check Meta connectivity,Comprobar la conexión con Meta
+Check WABA subscription,Consultar la suscripción de WhatsApp Business
+Subscribe Meta app,Suscribir la aplicación de Meta
+Subscribed Meta apps: {0},Aplicaciones de Meta suscritas: {0}
+None,Ninguna
+Meta operation succeeded.,La operación de Meta se completó correctamente.
+Meta operation did not confirm success.,Meta no confirmó que la operación se completara.
+Subscribe the Meta app to this WABA?,¿Suscribir la aplicación de Meta a esta cuenta de WhatsApp Business?
+Unsupported message type,Tipo de mensaje no compatible
+Change the channel status using its enable or disable action.,Cambie el estado del canal con su acción de habilitar o deshabilitar.
+The channel provider is unavailable and the channel cannot be enabled.,El proveedor del canal no está disponible y no se puede habilitar el canal.
+Invalid channel status.,Estado del canal no válido.
+Channel status changed concurrently. Reload the channel and retry.,El estado del canal cambió al mismo tiempo. Recargue el canal y vuelva a intentarlo.
+Save pending changes before changing channel status.,Guarde los cambios pendientes antes de cambiar el estado del canal.
+Copy Token,Copiar token
+Generate Token,Generar token
+Regenerate Token,Regenerar token
+Select a WhatsApp channel.,Seleccione un canal de WhatsApp.
+Generate a webhook verify token first.,Genere primero un token de verificación del webhook.
+Save pending changes before changing the webhook verify token.,Guarde los cambios pendientes antes de cambiar el token de verificación del webhook.
+Change the webhook verify token using its administrative actions.,Cambie el token de verificación del webhook mediante sus acciones administrativas.
+The channel changed. Reload it before changing the webhook verify token.,El canal cambió. Vuelva a cargarlo antes de cambiar el token de verificación del webhook.
+A webhook verify token already exists.,Ya existe un token de verificación del webhook.
+Regenerate the webhook verify token? You will need to update it in Meta.,¿Regenerar el token de verificación del webhook? Deberá actualizarlo en Meta.
+Administrative Status,Estado administrativo
+Local Revision,Revisión local
+Published Revision,Revisión publicada
+Synchronization Status,Estado de sincronización
+Synchronization Diagnostic,Diagnóstico de sincronización
+Latest external status reported for this template scope.,Último estado externo informado para el ámbito de esta plantilla.
+Published Snapshot,Instantánea publicada
+External Reading,Consulta externa
+Publication Request,Solicitud de publicación
+External Scope,Ámbito externo
+External Template Identity,Identidad externa de la plantilla
+Previous Template Identity,Identidad anterior de la plantilla
+Local,Local
+Publishing,Publicación en curso
+Synchronized,Sincronizada
+Conflict,Conflicto
+Synchronize templates,Sincronizar plantillas
+Synchronize,Sincronizar
+Publish to provider,Publicar en proveedor
+Publish,Publicar
+Use provider content,Usar contenido del proveedor
+Replace this local draft with the current provider content?,¿Reemplazar este borrador local con el contenido actual del proveedor?
+Replace the current provider content,Reemplazar el contenido actual del proveedor
+Save pending template changes first.,Guarda primero los cambios pendientes de la plantilla.
+Publish this saved draft to the provider?,¿Publicar este borrador guardado en el proveedor?
+"Created {0}, updated {1}, omitted {2}.","Creadas {0}, actualizadas {1}, omitidas {2}."
+The provider template list could not be read completely.,No se pudo consultar la lista completa de plantillas del proveedor.
+Meta Parameter Positions (JSON),Posiciones de parámetros de Meta (JSON)
+Invalid WhatsApp template parameter positions.,Las posiciones de los parámetros de la plantilla de WhatsApp no son válidas.
+This provider manages templates by channel.,Este proveedor administra las plantillas por canal.
+Select a Communication Channel Account for this template.,Selecciona una cuenta de canal de comunicación para esta plantilla.
+The template does not match the channel account.,La plantilla no corresponde a la cuenta del canal.
+Select a channel belonging to this provider.,Selecciona un canal que pertenezca a este proveedor.
+Invalid external template scope.,El ámbito externo de la plantilla no es válido.
+Invalid external template description.,La descripción externa de la plantilla no es válida.
+The external template identity is immutable.,La identidad externa de la plantilla es inmutable.
+Invalid external template reading.,La consulta externa de la plantilla no es válida.
+Invalid external template projection.,La representación externa de la plantilla no es válida.
+The external template language does not match the local template.,El idioma de la plantilla externa no coincide con el de la plantilla local.
+The external template projection does not match the provider revision.,La representación externa de la plantilla no coincide con la revisión del proveedor.
+This provider does not synchronize templates.,Este proveedor no sincroniza plantillas.
+This provider does not synchronize external revisions.,Este proveedor no sincroniza revisiones externas.
+This provider does not publish templates.,Este proveedor no publica plantillas.
+The external template scope changed. Reload and try again.,Cambió el ámbito externo de la plantilla. Vuelve a cargar e inténtalo de nuevo.
+The provider returned duplicate template identities.,El proveedor devolvió identidades de plantillas duplicadas.
+A template publication is already pending confirmation.,Ya hay una publicación de la plantilla pendiente de confirmación.
+Configuration changed. Reload the template before replacing its draft.,La configuración cambió. Vuelve a cargar la plantilla antes de reemplazar su borrador.
+Configuration changed. Reload the template before publishing.,La configuración cambió. Vuelve a cargar la plantilla antes de publicar.
+Invalid template publication options.,Las opciones de publicación de la plantilla no son válidas.
+Invalid provider template publication request.,La solicitud de publicación de la plantilla del proveedor no es válida.
+Resolve the external template conflict before publishing.,Resuelve el conflicto de la plantilla externa antes de publicar.
+Synchronize and confirm replacement of the external content before publishing.,Sincroniza y confirma el reemplazo del contenido externo antes de publicar.
+The published template revision is unavailable.,La revisión publicada de la plantilla no está disponible.
+Another operation is in progress for this template scope.,Hay otra operación en curso para el ámbito de esta plantilla.
+Invalid template channel or account identity.,El identificador del canal o de la cuenta de la plantilla no es válido.
+Template identity is assigned automatically.,El identificador de la plantilla se asigna automáticamente.
+"Template name, language, channel and account are immutable.","El nombre, el idioma, el canal y la cuenta de la plantilla son inmutables."
+External template evidence is managed internally.,La evidencia de las plantillas externas se administra internamente.
+The external template identity is already bound to this account or channel.,La identidad de la plantilla externa ya está vinculada a esta cuenta o canal.
+unsupported_category,Categoría incompatible
+unsupported_parameter_format,Formato de parámetros incompatible
+unsupported_component,Componente incompatible
+unsupported_header_format,Formato de encabezado incompatible
+unsupported_component_content,Contenido de componente incompatible
+unsupported_parameter_positions,Posiciones de parámetros incompatibles
+unsupported_language,Idioma incompatible
+unsupported_template_name,Nombre de plantilla incompatible
+external_template_missing,La plantilla ya no aparece en la consulta externa
+external_content_changed,Cambió el contenido de la plantilla externa
+external_identity_changed,Cambió la identidad externa de la plantilla
+external_projection_failed,No se pudo representar la plantilla externa
+external_list_failed,Falló la consulta del catálogo externo
+external_read_failed,Falló la consulta de la revisión externa
+publication_result_unknown,El resultado de la publicación está pendiente de confirmación
+publication_rejected,El proveedor rechazó la publicación
+Published Template Contract,Contrato de plantilla publicada
+Provider Language,Idioma del proveedor
+Language Mapping,Correspondencia de idioma
+Provisional,Provisional
+Select an enabled native Language.,Seleccione un idioma nativo habilitado.
+Select a language declared by this communication provider.,Seleccione un idioma declarado por este proveedor de comunicación.
+This provider uses native template languages.,Este proveedor usa idiomas nativos para sus plantillas.
+The provider template language is immutable.,El idioma de la plantilla del proveedor es inmutable.
+The template language is immutable.,El idioma de la plantilla es inmutable.
+Invalid provider template language catalog.,El catálogo de idiomas de plantillas del proveedor no es válido.
+Historical template {0} needs an explicit provider language migration.,La plantilla histórica {0} requiere una migración explícita del idioma del proveedor.
+unsupported_named_parameters,Los parámetros con nombre de esta lectura son incompatibles
+unsupported_parameter_names,Los nombres o la ubicación de los parámetros de Meta no son válidos
+invalid_named_parameter_examples,Los ejemplos de Meta no coinciden con los parámetros con nombre
+external_parameter_format_changed,El formato de parámetros cambió en el proveedor
+Provider Parameter Format,Formato de parámetros del proveedor
+Meta Parameter Names (JSON),Nombres de parámetros de Meta (JSON)
+Map internal template variables to their exact Meta names when they differ.,Asigne a las variables internas sus nombres exactos en Meta cuando sean diferentes.
+Invalid provider template parameter formats.,Los formatos de parámetros de plantilla del proveedor no son válidos.
+Invalid WhatsApp template parameter format.,El formato de parámetros de la plantilla de WhatsApp no es válido.
+Invalid WhatsApp template parameter names or mapping.,Los nombres o la correspondencia de parámetros de la plantilla de WhatsApp no son válidos.
+The external template parameter format is immutable.,El formato de parámetros de la plantilla externa es inmutable.
+unsupported_buttons,Los botones aún no son compatibles
+unsupported_carousel,Los carruseles aún no son compatibles
+unsupported_media_header,Los encabezados multimedia aún no son compatibles
+invalid_external_components,La estructura de los componentes externos no es válida
+provisional_template_language,Idioma nativo provisional {0} desde la configuración del chatbot
+unassigned_template_language,Falta asignar un idioma nativo habilitado
+Invalid WhatsApp template parameter names.,Los nombres de los parámetros de la plantilla de WhatsApp no son válidos.
+WhatsApp named template parameters are incompatible with Messaging parameter naming rules.,Los parámetros con nombre de la plantilla de WhatsApp no son compatibles con las reglas de nombres de Messaging.
+Historical template {0} needs an explicit WhatsApp parameter migration.,La plantilla histórica {0} requiere una migración explícita de parámetros de WhatsApp.
+Test Destination Number,Número de destino de prueba
+"International E.164 phone number (for example, +50499999999). Valid format does not guarantee an active WhatsApp account or Meta test-number recipient authorization.","Número telefónico internacional en formato E.164 (por ejemplo, +50499999999). Un formato válido no garantiza una cuenta activa de WhatsApp ni que el número esté autorizado en un número de prueba de Meta."
+"Enter a valid international phone number in E.164 format (for example, +50499999999).","Ingrese un número telefónico internacional válido en formato E.164 (por ejemplo, +50499999999)."
+The channel account does not belong to WhatsApp.,La cuenta de canal no pertenece a WhatsApp.
+Status must be Disabled or Enabled.,El estado debe ser Deshabilitado o Habilitado.
+Save pending changes before validating.,Guarde los cambios pendientes antes de validar.
+"Optional test recipient redirection is available. When enabled, notifications are sent only to the configured test destination and never to the original recipient.","La redirección opcional de destinatario de prueba está disponible. Al activarla, las notificaciones se envían únicamente al destino de prueba configurado y nunca al destinatario original."
+Approval Hash,Huella de aprobación
+Approved Process Revision,Revisión aprobada del proceso
+Approved Contract Hash,Huella del contrato aprobado
+Approved Delivery Hash,Huella de entrega aprobada
+Approval Invalidation,Invalidación de la aprobación
+Disable,Desactivar,Process consumer
+Validate this document before enabling or running its Process.,Valide este documento antes de habilitar o ejecutar su proceso.
+Use the available actions to change Status.,Use las acciones disponibles para cambiar el estado.
+The document changed. Reload it before changing Status.,El documento cambió. Vuelva a cargarlo antes de cambiar el estado.
+Validate only documents in Untested or Unavailable status.,Valide únicamente documentos en estado Sin probar o No disponible.
+This action is unavailable for the current Status.,Esta acción no está disponible para el estado actual.
+The Process approval is obsolete. Validate this document again.,La aprobación del proceso ya no está vigente. Vuelva a validar este documento.
+Save the current Process configuration before validating.,Guarde la configuración actual del proceso antes de validar.
+Save pending changes before changing Status.,Guarde los cambios pendientes antes de cambiar el estado.
+The action could not be completed. Reload the document and try again.,No se pudo completar la acción. Vuelva a cargar el documento e inténtelo de nuevo.
+Process validation failed.,No se pudo validar el proceso.
+The selected notification template is unavailable.,La plantilla de notificación seleccionada no está disponible.
+Invalid activation.,La activación no es válida.
+Invalid AI Provider status.,Estado del proveedor de IA no válido.
+Invalid AI profile action.,Acción del perfil de IA no válida.
+Manage availability,Gestionar disponibilidad
+Evaluation Compatibility Evidence,Evidencia de compatibilidad de la evaluación
+The registered AI provider is unavailable.,El proveedor de IA registrado no está disponible.
+Run a technical evaluation before using this AI profile.,Ejecute una evaluación técnica antes de usar este perfil de IA.
+This AI profile is unavailable. Review its diagnostic before evaluating it.,Este perfil de IA no está disponible. Revise su diagnóstico antes de evaluarlo.
+Select an enabled AI profile with a current technical evaluation.,Seleccione un perfil de IA habilitado con una evaluación técnica vigente.
+Only untested or unavailable AI profiles can start an evaluation.,Solo los perfiles de IA sin probar o no disponibles pueden iniciar una evaluación.
+Decision Acceptance,Aceptación de decisiones
+Decision acceptance settings require an internal Decision profile.,Los criterios de aceptación requieren un perfil interno de decisión.
+Decision acceptance thresholds must be greater than 0.5 and at most 1.,Los umbrales de decisión deben ser mayores que 0.5 y como máximo 1.

@@ -32,7 +32,7 @@ const change = handlers['Bot Flow'].process_definition[0];
 const beforeSave = handlers['Bot Flow'].before_save[0];
 function form() {
     return {
-        doc: {name: 'draft', process_definition: 'old', parameters: [{parameter: 'old'}], outputs: [{status_code: 'old'}],
+        doc: {name: 'draft', status: 'Enabled', process_definition: 'old', parameters: [{parameter: 'old'}], outputs: [{status_code: 'old'}],
             output_translations: [{status_code: 'old'}], process_method: 'old.handler', process_contract: 'old', priority: 1},
         fields_dict: {},
         page: {set_indicator() {}},
@@ -131,7 +131,7 @@ function result(definition, inputs = ['input'], outputs = ['success']) {
     frm.doc.process_definition = 'A'; const a1 = change(frm);
     assert.equal(frm.doc.parameters.length, 0); assert.equal(frm.doc.outputs.length, 0);
     assert.equal(frm.doc.output_translations.length, 0); assert.equal(frm.doc.process_method, '');
-    assert.equal(frm.doc.process_test_status, 'Untested');
+    assert.equal(frm.doc.status, 'Enabled');
     assert.throws(() => beforeSave(frm), /successful Process discovery/);
     frm.doc.process_definition = 'B'; const b = change(frm);
     frm.doc.process_definition = 'A'; const a2 = change(frm);
@@ -184,35 +184,52 @@ for (const [filename, apply, table] of [
 console.log('PASS: ordered single/dual modes, per-row editability, fixed Flow action in Bot Flow.');
 
 (async function lifecycle() {
-    const calls = [], notifications = [];
-    const button = {prop() {return this;}, attr() {return this;}, text() {return this;}, remove() {}};
-    const wrapper = {off() {return this;}, on() {return this;}};
-    let action;
-    const frm = {doc: {doctype: 'Bot Flow', name: 'saved', modified: 'before', process_definition: 'definition',
-            parameters: [], process_contract: '{}', __onload: {flow_lifecycle: {lifecycle_status: 'Untested'}}},
-        doctype: 'Bot Flow', fields_dict: {}, $wrapper: wrapper,
-        page: {set_primary_action() {}, set_indicator() {}, menu: {find: () => ({closest: () => ({remove() {}})})},
-            add_button(_label, callback) {action = callback; return button;}},
-        is_new: () => false, is_dirty: () => false, refresh_field() {}, set_intro() {},
-        async refresh() {await context.refresh_flow_lifecycle(this);}};
-    const api = {...frappe, get_route_str: () => 'Form/Bot Flow/saved', user: {has_role: () => true},
-        utils: {escape_html: value => value}, msgprint: value => notifications.push(value),
-        model: {remove_from_locals() {}, sync(response) {frm.doc = response.docs[0];}},
-        call: async () => ({message: {process_contract: '{}'}})};
-    const context = {frappe: api, __: s => s, $: {ajax: async request => {
-        calls.push(request.url);
-        if (request.url.endsWith('validate_process')) return {message: {status: 'Passed', lifecycle_status: 'Enabled'}};
-        if (request.url.endsWith('getdoc')) return {docs: [{doctype: 'Bot Flow', name: 'saved', modified: 'after',
-            __onload: {flow_lifecycle: {lifecycle_status: 'Enabled'}}, status: 'Enabled'}]};
-        throw Error('Unexpected repeated state request');
+    const calls = [];
+    const buttons = new Map();
+    let dirty = false;
+    const states = {Untested: 'Disabled', Disabled: 'Enabled', Enabled: 'Disabled', Unavailable: 'Disabled'};
+    const frm = {
+        doc: {doctype: 'Bot Flow', name: 'saved', modified: 'before', status: 'Untested'},
+        perm: [{write: 1}], $wrapper: {off() {}, on() {}}, page: {set_indicator() {}},
+        add_custom_button(label, callback) {
+            const button = {callback, props: {}, prop(key, value) {this.props[key] = value;}};
+            buttons.set(label, button);
+            return button;
+        },
+        remove_custom_button(label) {buttons.delete(label);},
+        is_new: () => false,
+        is_dirty: () => dirty,
+        async reload_doc() {
+            this.doc = {...this.doc, status: states[this.doc.status], modified: 'after'};
+            refresh();
+        },
+    };
+    const api = {...frappe, provide() {}, get_route_str: () => 'Form/Bot Flow/saved',
+        user: {has_role: () => true}, utils: {escape_html: value => value}};
+    const context = {frappe: api, messaging: {process_approval: {}}, __: s => s, $: {ajax: async request => {
+        calls.push(request);
+        return {message: {consumer_status: states[frm.doc.status]}};
     }}};
-    vm.runInNewContext(fs.readFileSync(__dirname + '/bot_flow.js', 'utf8'), context);
-    await context.refresh_flow_lifecycle(frm);
+    vm.runInNewContext(fs.readFileSync(__dirname + '/../../../public/js/process_test.js', 'utf8'), context);
+    const refresh = () => context.messaging.process_approval.refresh(frm, 'bot_flow.');
+    refresh();
     assert.equal(calls.length, 0);
-    await action();
-    assert.equal(frm.doc.status, 'Enabled');
-    assert.equal(calls.length, 2);
-    assert(notifications.some(value => value.message?.includes('validated and enabled')));
-    assert.equal(frm.flow_lifecycle_operation, null);
-    console.log('PASS: load evidence reuse, successful tester enables, document reload and no repeated state request.');
+    assert.deepEqual([...buttons.keys()], ['Validate']);
+    dirty = true;
+    await buttons.get('Validate').callback();
+    assert.equal(calls.length, 0);
+    dirty = false;
+    for (const [label, next] of [['Validate', 'Disabled'], ['Enable', 'Enabled'], ['Disable', 'Disabled']]) {
+        assert.deepEqual([...buttons.keys()], [label]);
+        await buttons.get(label).callback();
+        assert.equal(frm.doc.status, next);
+    }
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls.map(call => call.url.split('.').at(-1)), ['validate_process', 'set_active', 'set_active']);
+    assert.deepEqual(JSON.parse(calls[0].data.candidate), {name: 'saved', modified: 'before'});
+    frm.doc.status = 'Unavailable';
+    refresh();
+    assert.deepEqual([...buttons.keys()], ['Validate']);
+    assert.equal(calls.length, 3);
+    console.log('PASS: shared upper actions read persisted states and require a clean saved form.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

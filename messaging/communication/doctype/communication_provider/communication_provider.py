@@ -8,6 +8,7 @@ from frappe import _
 from frappe.model.document import Document
 
 from .parameters import PARAMETER_FIELDS, validate_parameter_schema
+from messaging.common.locking import lock_document_types
 from messaging.common.write_guards import InternalWriteGuard
 from messaging.security.permissions import require_provider_function, require_registration_owner, installed_applications
 
@@ -83,7 +84,7 @@ def _sync_provider_catalog(definitions, *, tolerate_errors=False):
 def _write_provider_catalog(definitions):
 	for definition in definitions.values():
 		validate_parameters(definition['parameters'])
-	frappe.db.get_value('DocType', 'Communication Provider', 'name', for_update=True)
+	lock_document_types('Communication Provider')
 	with catalog_sync():
 		for definition in definitions.values():
 			name = definition['id']
@@ -96,8 +97,10 @@ def _write_provider_catalog(definitions):
 			if not doc.is_new() and doc.fixed_channel_id and doc.fixed_channel_id != fixed:
 				frappe.throw(_("Configured provider channels require an explicit compatible migration."))
 			if fixed:
-				owner = frappe.db.get_value('Communication Channel', fixed, 'provider')
-				if owner and owner != name:
+				reserved = frappe.db.get_value('Communication Provider',
+					{'fixed_channel_id': fixed, 'name': ['!=', name]}, 'name', for_update=True)
+				owner = frappe.db.get_value('Communication Channel', fixed, 'provider', for_update=True)
+				if reserved or (owner and owner != name):
 					frappe.throw(_("The fixed channel ID belongs to another provider."))
 			fingerprint = definition_hash(definition)
 			action = 'created' if doc.is_new() else 'updated' if doc.definition_hash != fingerprint else 'unchanged'
@@ -151,16 +154,17 @@ def get_provider_states(*, for_update=False):
 	"""Provider states are uncached, disabled by default and independent of availability."""
 	if for_update:
 		_lock_provider_states()
-		rows = frappe.db.sql('select name, enabled from `tabCommunication Provider` for update', as_dict=True)
+		rows = frappe.db.get_values('Communication Provider', {}, ['name', 'status'], as_dict=True, for_update=True)
 	else:
-		rows = frappe.get_all('Communication Provider', fields=['name', 'enabled'])
-	return {row.name: bool(row.enabled) for row in rows}
+		rows = frappe.get_all('Communication Provider', fields=['name', 'status'])
+	return {row.name: row.status == 'Enabled' for row in rows}
 
 
 def _write_provider_states(states):
 	# Internal caller owns the catalog lock and the transaction.
 	for name in frappe.get_all('Communication Provider', pluck='name'):
-		frappe.db.set_value('Communication Provider', name, 'enabled', int(states.get(name, False)), update_modified=False)
+		frappe.db.set_value('Communication Provider', name, 'status', 'Enabled' if states.get(name) else 'Disabled',
+			update_modified=False)
 
 
 @frappe.whitelist(methods=['POST'])
@@ -176,7 +180,8 @@ def set_provider_enabled(provider, enabled):
 	enabled = enabled in (True, '1')
 	try:
 		_lock_provider_states()
-		if not frappe.db.exists('Communication Provider', provider):
+		previous = frappe.db.get_value('Communication Provider', provider, 'status', for_update=True)
+		if previous is None:
 			frappe.throw(_("Invalid channel provider."))
 		if enabled:
 			definition = provider_definition(provider)
@@ -187,10 +192,10 @@ def set_provider_enabled(provider, enabled):
 				ready = False
 			if not ready:
 				frappe.throw(_("The channel provider is unavailable and cannot be enabled."))
-		states = get_provider_states(for_update=True)
-		previous = states.get(provider, False)
-		frappe.db.set_value('Communication Provider', provider, 'enabled', int(enabled), update_modified=False)
-		return dict(provider=provider, enabled=enabled, previous_enabled=previous)
+		status = 'Enabled' if enabled else 'Disabled'
+		if status != previous:
+			frappe.db.set_value('Communication Provider', provider, 'status', status, update_modified=False)
+		return dict(provider=provider, enabled=enabled, previous_enabled=previous == 'Enabled')
 	except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
 		frappe.throw(_("Provider enablement changed concurrently. Reload the provider list and retry."), frappe.TimestampMismatchError)
 
@@ -199,7 +204,7 @@ def set_provider_enabled(provider, enabled):
 def channel_providers():
 	"""Enabled providers with an available channel slot, respecting Desk permissions."""
 	frappe.has_permission('Communication Channel', 'read', throw=True)
-	providers = frappe.get_list('Communication Provider', filters={'enabled': 1},
+	providers = frappe.get_list('Communication Provider', filters={'status': 'Enabled'},
 		fields=['name', 'provider_name', 'single_channel'], order_by='provider_name, name', limit_page_length=0)
 	occupied = set(frappe.get_all('Communication Channel',
 		filters={'provider': ['in', [row.name for row in providers]]}, pluck='provider')) if providers else set()
@@ -211,7 +216,7 @@ def provider_definitions():
 	result, conflicts = {}, set()
 	for app in installed_applications():
 		from messaging.registry._catalog import application_declarations
-		from messaging.registrations.communication_providers import normalize_definitions
+		from messaging.registry.communication_providers import normalize_definitions
 		rows = normalize_definitions(app, application_declarations(app, kinds=('communication_providers',), tolerate_errors=True)['communication_providers'])
 		for key, row in rows.items():
 			owner = frappe.db.get_value('Communication Provider', key, 'application')
@@ -244,6 +249,7 @@ def provider_registry():
 
 
 active_adapter = ContextVar('messaging_active_adapter', default=None)
+active_template_binding = ContextVar('messaging_active_template_binding', default=None)
 
 
 def provider_definition(provider):
@@ -260,14 +266,20 @@ def operation(definition, name, *args):
 	"""Only installed Code-First declarations, never client paths, select executable operations."""
 	if name == 'authenticate_ingress':
 		frappe.throw(_("Use the registered ingress dispatcher for channel authentication."), frappe.PermissionError)
-	account = (args[0].get('account') if name in ('send', 'validate_notification', 'validate_template', 'template_variable_limits', 'resolve_provider_template', 'prepare_provider_template')
+	binding_operations = ('list_templates', 'publish_template', 'verify_template_revision')
+	account = (args[0].get('account') if name in ('send', 'mark_incoming_read', 'validate_notification', 'validate_template', 'template_variable_limits', 'resolve_provider_template', 'prepare_provider_template',
+		'template_scope_key', 'describe_template', 'project_template', 'prepare_template_publication', *binding_operations)
+		else args[1] if name in ('query_template_status', 'template_available')
 		else getattr(args[1], 'name', None) if name == 'notification_destination'
 		else getattr(args[0], 'name', None) if name == 'resolve_account' else None)
+	channel = args[0].get('channel') if name in binding_operations or name == 'query_template_status' and not account else None
+	template_token = active_template_binding.set((definition['id'], channel) if channel and not account else None)
 	token = active_adapter.set((definition['id'], account))
 	try:
 		return frappe.get_attr(definition['operations'][name])(*args)
 	finally:
 		active_adapter.reset(token)
+		active_template_binding.reset(template_token)
 
 
 def is_available(definition):
@@ -278,7 +290,7 @@ def is_available(definition):
 def get_provider_enabled(provider):
 	"""Administrative authorization is independent of technical availability."""
 	provider_definition(provider)
-	return get_provider_states().get(provider, False)
+	return frappe.db.get_value('Communication Provider', provider, 'status') == 'Enabled'
 
 
 def require_provider_enabled(provider):

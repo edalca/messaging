@@ -1,6 +1,6 @@
 """Typed AI capability contracts and their closed, versioned JSON representation.
 
-Public consumers import these objects through messaging.registrations.ai_providers.
+Public consumers import these objects through messaging.registry.ai_providers.
 Administrative persistence and conversation orchestration remain with their DocTypes.
 """
 from collections.abc import Callable, Mapping
@@ -10,10 +10,13 @@ from enum import StrEnum
 import json
 import math
 import re
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import frappe
 from frappe import _
+
+if TYPE_CHECKING:
+    from .decision import DecisionEvidence
 
 SCHEMA_VERSION = '1'
 MAX_FLOWS = 30
@@ -59,6 +62,8 @@ class ParameterType(StrEnum):
     DATE = 'Date'
     NAME = 'Name'
     EXPRESSION = 'Expression'
+    DECIMAL = 'Decimal'
+    BOOLEAN = 'Boolean'
 
 
 class ExtractionStatus(StrEnum):
@@ -89,7 +94,7 @@ def _tuple(value, kind, maximum=30):
 
 
 def _confidence(value):
-    if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+    if type(value) not in (int, float) or not 0 <= value <= 1 or not math.isfinite(value):
         raise InvalidInterpretation('Invalid wire confidence')
 
 
@@ -172,6 +177,8 @@ class DecisionRequest:
 
 @dataclass(frozen=True, slots=True)
 class DecisionResponse:
+    """Historical aggregate used by legacy Decision records and fixtures."""
+
     request_id: str
     outcome: DecisionOutcome
     flows: tuple[str, ...] = ()
@@ -208,10 +215,12 @@ class ExtractionParameter:
     label: str
     parameter_type: ParameterType
     allow_multiple_values: bool = False
+    description: str = field(default='', kw_only=True)
 
     def __post_init__(self):
         _ref(self.ref)
         _text(self.label, 500)
+        _text(self.description, 8000, empty=True)
         if type(self.parameter_type) is not ParameterType or type(self.allow_multiple_values) is not bool:
             raise InvalidInterpretation('Invalid extraction definition')
 
@@ -223,10 +232,12 @@ class ParameterExtractionRequest:
     language: str
     parameters: tuple[ExtractionParameter, ...]
     schema_version: str = SCHEMA_VERSION
+    context: str = field(default='', kw_only=True)
 
     def __post_init__(self):
         _identity(self.schema_version, self.request_id)
         _text(self.language, 40)
+        _text(self.context, 8000, empty=True)
         if type(self.message) is not Message:
             raise InvalidInterpretation('Invalid extraction message')
         _tuple(self.parameters, ExtractionParameter)
@@ -240,7 +251,8 @@ class ParameterExtractionRequest:
 class ExtractedParameter:
     ref: str
     status: ExtractionStatus
-    values: tuple[str | int, ...] = ()
+    values: tuple[str | int | bool, ...] = ()
+    evidence: tuple[str, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self):
         _ref(self.ref)
@@ -248,8 +260,12 @@ class ExtractedParameter:
             raise InvalidInterpretation('Invalid extraction result')
         if (self.status == ExtractionStatus.EXTRACTED) != bool(self.values):
             raise InvalidInterpretation('Inconsistent extraction status')
-        if any(type(value) not in (str, int) or len(str(value)) > 4000 for value in self.values):
+        if any(type(value) not in (str, int, bool) or type(value) is int and value.bit_length() > 13288
+            or len(str(value)) > 4000 for value in self.values):
             raise InvalidInterpretation('Invalid extraction value')
+        _tuple(self.evidence, str, 100)
+        for item in self.evidence:
+            _text(item, 4000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +283,7 @@ class ParameterExtractionResponse:
 
 @dataclass(frozen=True, slots=True)
 class DecisionCapability:
-    execute: Callable[[DecisionRequest, ProviderConfiguration], DecisionResponse]
+    execute: Callable[[DecisionRequest, ProviderConfiguration], 'DecisionEvidence']
 
     def __post_init__(self):
         if not callable(self.execute):
@@ -350,7 +366,12 @@ def to_json(value):
     if isinstance(value, StrEnum):
         return value.value
     if is_dataclass(value):
-        return {key: to_json(getattr(value, key)) for key in value.__dataclass_fields__}
+        result = {key: to_json(getattr(value, key)) for key in value.__dataclass_fields__}
+        optional = {ExtractionParameter: 'description', ParameterExtractionRequest: 'context',
+            ExtractedParameter: 'evidence'}.get(type(value))
+        if optional and not result[optional]:
+            del result[optional]
+        return result
     if isinstance(value, (tuple, list)):
         return [to_json(item) for item in value]
     if isinstance(value, dict):

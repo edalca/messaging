@@ -8,7 +8,9 @@ from frappe.utils.password import get_decrypted_password
 
 from messaging.common.configuration import EncryptedConfigurationValue, MASK, normalize, prepare_secret, validate_value_owner
 from messaging.communication.doctype.communication_channel_account.binding import resolve_binding
-from messaging.communication.doctype.communication_provider.communication_provider import active_adapter, provider_definition
+from messaging.communication.doctype.communication_provider.communication_provider import (
+	active_adapter, active_template_binding, provider_definition, require_provider_enabled,
+)
 from messaging.communication.doctype.communication_provider_value.values import (
 	OWNERS,
 	OWNER_SCOPES,
@@ -51,6 +53,8 @@ def parameter_schema(doctype, provider=None, channel=None, account=None):
 	definition = provider_definition(provider)
 	parameters = [{k: r.get(k) for k in ('parameter_key', 'label', 'field_type', 'required', 'options', 'default_value', 'sort_order', 'description')} for r in catalog.parameters if r.scope == scope]
 	for parameter in parameters:
+		if (scope, provider, parameter['parameter_key']) == ('Channel', 'WHATSAPP', 'verify_token'):
+			parameter['read_only'] = True
 		if scope == 'Notification Rule' and parameter['field_type'] == 'Link' and frappe.get_meta(parameter['options']).has_field('enabled'):
 			parameter['filters'] = {'enabled': 1}
 	return dict(revision=catalog.definition_hash, automatic_account_id='prepare_account_id' in definition['operations'], parameters=parameters)
@@ -61,7 +65,6 @@ def transport_parameters(provider, account, *, template=None):
 	active = active_adapter.get() == (provider, account)
 	_definition, binding = resolve_binding(provider, account, incoming=not active, check_adapter=False)
 	channel = frappe.get_doc('Communication Channel', binding.channel)
-	result = {}
 	documents = [('Channel', channel), ('Account', binding)]
 	if template is not None:
 		if not active:
@@ -69,13 +72,23 @@ def transport_parameters(provider, account, *, template=None):
 		doc = frappe.get_doc('Communication Template', template)
 		if doc.status != 'Active' or doc.channel != binding.channel:
 			frappe.throw(_("The template channel does not match the channel account."), frappe.PermissionError)
-		validate_values(doc, operational=True)
 		documents.append(('Template', doc))
-	for scope, doc in documents:
-		validate_values(doc, operational=True)
-		parameters = definitions(doc)
-		values = {}
-		for row in doc.parameters:
-			values[row.parameter_key] = get_decrypted_password(row.doctype, row.name, 'secret_value', raise_exception=False) if parameters[row.parameter_key]['field_type'] == 'Password' else json.loads(row.value)
-		result[scope] = values
-	return result
+	return {scope: _operational_values(doc) for scope, doc in documents}
+
+
+def template_channel_parameters(provider, channel):
+	"""Read channel configuration during a registered channel-scoped template operation."""
+	if active_template_binding.get() != (provider, channel):
+		frappe.throw(_("Template parameters require a registered adapter operation."), frappe.PermissionError)
+	require_provider_enabled(provider)
+	doc = frappe.get_doc('Communication Channel', channel)
+	if doc.provider != provider or doc.status != 'Enabled':
+		frappe.throw(_("The communication channel is disabled."), frappe.PermissionError)
+	return _operational_values(doc)
+
+
+def _operational_values(doc):
+	validate_values(doc, operational=True)
+	parameters = definitions(doc)
+	return {row.parameter_key: get_decrypted_password(row.doctype, row.name, 'secret_value', raise_exception=False)
+		if parameters[row.parameter_key]['field_type'] == 'Password' else json.loads(row.value) for row in doc.parameters}

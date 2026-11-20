@@ -12,7 +12,7 @@ from messaging.communication.doctype.process_definition.test_process_definition 
 from messaging.chatbot.doctype.bot_flow.configuration import validate_preset_configuration
 from messaging.chatbot.doctype.bot_flow_presets import bot_flow_presets as presets
 from messaging.chatbot.doctype.bot_settings.bot_settings import apply_flow_presets
-from messaging.registrations.processes import BotRequest, BotResponse
+from messaging.registry.processes import BotRequest, BotResponse
 
 
 def capture_flow(*, params, outcomes):
@@ -271,7 +271,7 @@ def register():
         self.assertNotIn('fr', listed['installed_languages'])
 
     def test_restoring_localized_capture_preserves_the_shared_parameter(self):
-        from messaging.registrations.processes import BotProcess
+        from messaging.registry.processes import BotProcess
         from messaging.registry.processes import register_processes
         self.process += '_capture'
         self.main.PROCESS = self.process

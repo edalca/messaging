@@ -1,12 +1,29 @@
+const decision_policy_defaults = {minimum_confidence: 0.60, intent_probability: 0.75, negation_probability: 0.65};
+
+async function refresh_decision_policy(frm, reset = false) {
+    const visible = frm.doc.profile_type === 'Decision';
+    frm.toggle_display('decision_policy_section', visible);
+    if (visible && (frm.is_new() || reset)) {
+        for (const [key, value] of Object.entries(decision_policy_defaults)) {
+            if (!frm.doc[key]) await frm.set_value(key, value);
+        }
+    } else if (!visible && reset) {
+        for (const key of Object.keys(decision_policy_defaults)) {
+            if (frm.doc[key]) await frm.set_value(key, 0);
+        }
+    }
+}
+
 frappe.ui.form.on('AI Configuration', {
     setup(frm) {
         frm._parameters_loaded = frappe.require('/assets/messaging/js/provider_parameters.js');
-        frm.set_query('provider', () => ({filters: {enabled: 1, [frm.doc.profile_type === 'Parameter Extraction' ? 'parameter_extraction' : 'decision']: 1}}));
+        frm.set_query('provider', () => ({filters: {status: 'Enabled', [frm.doc.profile_type === 'Parameter Extraction' ? 'parameter_extraction' : 'decision']: 1}}));
     },
     async refresh(frm) {
         frm.set_df_property('provider', 'label', __('AI Provider'));
         frm.set_df_property('provider', 'read_only', !frm.is_new());
-        if (!frm.is_new() && frm.doc.profile_type === 'Decision') {
+        const canManage = frm.perm?.[0]?.write && frappe.user.has_role('System Manager');
+        if (!frm.is_new() && canManage && frm.doc.profile_type === 'Decision') {
             const button = frm.add_custom_button(__('Test connection'), async () => {
                 if (frm._ai_connection_pending) return;
                 if (frm.is_dirty()) { frappe.msgprint(__('Save the configuration before testing its connection.')); return; }
@@ -22,12 +39,13 @@ frappe.ui.form.on('AI Configuration', {
                     if (!result || result.configuration !== doc.name || typeof result.operational !== 'boolean'
                         || !result.status || !result.diagnostic || !result.last_checked || !result.message
                         || result.operational !== (result.status === 'operational')) throw new Error('Invalid connection result');
-                    if (frm.doc === doc) {
+                    if (frm.doc === doc && doc.status !== result.profile_status && !frm.is_dirty()) {
+                        await frm.reload_doc();
+                    } else if (frm.doc === doc) {
                         // Server-owned diagnostics must not mark the document dirty or replace local edits.
                         Object.assign(doc, {validation_status: result.status, last_checked: result.last_checked,
                             diagnostic: result.diagnostic});
                         for (const field of ['validation_status', 'last_checked', 'diagnostic']) frm.refresh_field(field);
-                        doc.__onload = {...doc.__onload, ai_operational_status: result.diagnostic};
                         frm.trigger('connection_intro');
                     }
                     frappe.msgprint({title: __('Test connection'), message: frappe.utils.escape_html(result.message),
@@ -44,39 +62,44 @@ frappe.ui.form.on('AI Configuration', {
             button.prop('disabled', !!frm._ai_connection_pending);
         }
         frm.trigger('connection_intro');
-        if (!frm.is_new()) await functional_evaluation(frm);
+        await refresh_decision_policy(frm);
+        if (!frm.is_new()) functional_evaluation(frm, canManage);
         await frm._parameters_loaded;
         await messaging.provider_parameters.render(frm);
     },
-    profile_type(frm) {
+    async profile_type(frm) {
         frm.remove_custom_button(__('Test connection'));
         frm.trigger('connection_intro');
+        await refresh_decision_policy(frm, true);
     },
     connection_intro(frm) {
         if (frm.doc.profile_type === 'Parameter Extraction') {
             frm.set_intro(__('Parameter extraction is not available. This profile stores configuration only.'));
             return;
         }
-        const status = frm.doc.__onload?.ai_operational_status;
+        const status = frm.doc.diagnostic;
         const notice = __('Saving does not call the AI provider. Connection checks and profile evaluations are explicit actions and may incur usage.');
         frm.set_intro([status, notice].filter(Boolean).map(frappe.utils.escape_html).join('<br>'));
     },
     async provider(frm) {
         await frm._parameters_loaded;
         await messaging.provider_parameters.selection_changed(frm, 'provider');
+        await refresh_decision_policy(frm, true);
     },
     validate(frm) { messaging.provider_parameters.flush(frm); }
 });
 
 
-async function functional_evaluation(frm) {
+function functional_evaluation(frm, canManage) {
     const base = 'messaging.chatbot.doctype.ai_evaluation_run.runtime.';
-    const {message: state} = await frappe.call({method: base + 'approval_status', args: {configuration: frm.doc.name}, type: 'POST'});
+    const doc = frm.doc;
+    const state = doc.__onload?.functional_evaluation || {};
     const escape = frappe.utils.escape_html;
     const panel = frm.fields_dict.evaluation_panel.$wrapper;
     const technical = state.technical || {};
     const functional = state.functional || {};
-    panel.empty().append($('<p>').text(state.diagnostic));
+    panel.empty();
+    if (state.diagnostic) panel.append($('<p>').text(state.diagnostic));
     if (state.run) {
         panel.append($('<p>').text(__('Technical validation: {0}/{1}.', [technical.valid || 0, technical.executed || 0])));
         panel.append($('<p>').text(__('Functional evaluation: {0}/{1}.', [functional.matched || 0, functional.applicable || 0])));
@@ -84,22 +107,42 @@ async function functional_evaluation(frm) {
         panel.append($('<p>').text(__('Approval policy: {0}.', [state.policy || ''])));
         panel.append($('<a>').attr('href', '/desk/ai-evaluation-run/' + encodeURIComponent(state.run)).text(__('View evaluation')));
     }
+    const colors = {Untested: 'orange', Enabled: 'green', Disabled: 'gray', Unavailable: 'red'};
+    frm.page.set_indicator(__(doc.status), colors[doc.status]);
+    if (!canManage) return;
+    if (doc.status === 'Enabled' || (doc.status === 'Disabled' && state.approved)) {
+        const active = doc.status === 'Disabled';
+        frm.add_custom_button(active ? __('Enable') : __('Disable', null, 'Process consumer'), async () => {
+            if (frm.is_dirty() || frm.doc !== doc) return;
+            const {message: result} = await frappe.call({
+                method: 'messaging.chatbot.doctype.ai_configuration.ai_configuration.set_active',
+                args: {configuration: doc.name, active: Number(active), modified: doc.modified},
+                type: 'POST', freeze: true
+            });
+            if (result?.diagnostic) frappe.msgprint(escape(result.diagnostic));
+            if (frm.doc === doc) await frm.reload_doc();
+        });
+        return;
+    }
+    if (!['Untested', 'Unavailable'].includes(doc.status) || !doc.__onload?.provider_available) return;
     frm.add_custom_button(__('Evaluate profile'), async () => {
         if (frm.is_dirty()) { frappe.msgprint(__('Save the configuration before evaluating it.')); return; }
-        const {message: plan} = await frappe.call({method: base + 'preview', args: {configuration: frm.doc.name}});
+        const {message: plan} = await frappe.call({method: base + 'preview', args: {configuration: doc.name}});
+        if (frm.doc !== doc) return;
         const dialog = new frappe.ui.Dialog({title: __('Profile evaluation'), fields: [
             {fieldname: 'details', fieldtype: 'HTML'},
             {fieldname: 'seed', fieldtype: 'Data', label: __('Random seed'), description: __('Leave empty for a new random selection.')},
             {fieldname: 'optional', fieldtype: 'MultiSelectPills', label: __('Optional case templates'),
                 get_data: () => plan.optional_templates.map(r => ({label: r.template_name, value: r.name}))}
         ], primary_action_label: __('Start evaluation'), primary_action: async values => {
-            const {message: updated} = await frappe.call({method: base + 'preview', args: {configuration: frm.doc.name, optional: JSON.stringify(values.optional || [])}});
+            if (frm.doc !== doc || frm.is_dirty()) return;
+            const {message: updated} = await frappe.call({method: base + 'preview', args: {configuration: doc.name, optional: JSON.stringify(values.optional || [])}});
             if (updated.insufficient.some(r => r.mandatory !== false)) {
                 frappe.msgprint(__('Insufficient evaluation coverage: {0}.', [updated.insufficient.map(r =>
                     escape(`${r.case_template}/${r.language}/${r.group}: ${r.available}/${r.required}`)).join('; ')])); return;
             }
             const {message: run} = await frappe.call({method: base + 'request_evaluation', type: 'POST', freeze: true,
-                args: {configuration: frm.doc.name, seed: values.seed || null, optional: JSON.stringify(values.optional || [])}});
+                args: {configuration: doc.name, seed: values.seed || null, optional: JSON.stringify(values.optional || [])}});
             dialog.hide(); frappe.set_route('Form', 'AI Evaluation Run', run.name);
         }});
         dialog.fields_dict.details.$wrapper.text(__('This action may consume the configured provider: {0} samples, at most {1} calls, {2} seconds overall, no automatic retries. Languages: {3}.',

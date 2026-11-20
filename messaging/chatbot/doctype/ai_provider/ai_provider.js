@@ -6,7 +6,26 @@ frappe.ui.form.on('AI Provider', {
         frm.set_df_property('schema_version', 'read_only', 1);
         for (const field of ['decision', 'parameter_extraction']) frm.set_df_property(field, 'read_only', internal || !frm.is_new());
         frm.set_df_property('parameters', 'read_only', internal ? 1 : 0);
-        if (!internal) return;
+        if (!internal) {
+            if (!frm.is_new() && frm.perm?.[0]?.write && frappe.user.has_role('System Manager')) {
+                frm.add_custom_button(__('Manage availability'), () => {
+                    if (frm.is_dirty()) return;
+                    const doc = frm.doc;
+                    frappe.prompt({
+                        fieldname: 'status', fieldtype: 'Select', label: __('Status'), reqd: 1,
+                        options: ['Enabled', 'Disabled'].join('\n'), default: doc.status
+                    }, async ({status}) => {
+                        if (frm.doc !== doc || frm.is_dirty()) return;
+                        await frappe.call({
+                            method: 'messaging.chatbot.doctype.ai_provider.ai_provider.set_provider_enabled',
+                            args: {provider: doc.name, enabled: status === 'Enabled'}, type: 'POST', freeze: true
+                        });
+                        if (frm.doc === doc) await frm.reload_doc();
+                    }, __('Manage availability'), __('Apply'));
+                });
+            }
+            return;
+        }
         // The toolbar is built before this event, so clear Save and the Delete entry here.
         frm.disable_save();
         frm.set_read_only();

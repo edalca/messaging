@@ -1,6 +1,6 @@
 frappe.ui.form.on("Bot Settings", {
 	setup(frm) {
-		frm.set_query("active_ai_configuration", () => ({ filters: { enabled: 1, profile_type: "Decision", validation_status: "operational" } }));
+		frm.set_query("active_ai_configuration", () => ({ filters: { status: "Enabled", profile_type: "Decision" } }));
 		frm.set_query("language", "chatbot_languages", () => ({ filters: { enabled: 1 } }));
 	},
 });

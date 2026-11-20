@@ -10,6 +10,7 @@
   "field_type",
   "required",
   "is_secret",
+  "send_to_rest",
   "default_value",
   "options",
   "minimum",
@@ -55,6 +56,13 @@
    "fieldtype": "Check",
    "label": "Is Secret",
    "read_only": 1
+  },
+  {
+   "fieldname": "send_to_rest",
+   "fieldtype": "Check",
+   "label": "Send in REST Request",
+   "description": "Include this non-secret parameter in the JSON request body.",
+   "depends_on": "eval:parent.provider_type !== 'Internal'"
   },
   {
    "fieldname": "default_value",

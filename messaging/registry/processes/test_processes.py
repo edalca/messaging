@@ -7,16 +7,28 @@ from messaging.communication.doctype.process_definition.test_process_definition 
 from messaging.communication.doctype.process_definition.execution import run_handler
 from messaging.communication.doctype.process_definition.revisions import registration_revisions
 from typing import get_args, get_type_hints
-from messaging.registrations.processes import BotDefinition, BotHandler, BotParams, BotProcess, BotRequest, BotResponse, NotifyDefinition, NotifyHandler, NotifyNoResponse, NotifyParams, NotifyProcess, NotifyRequest, NotifyResponse, ProcessOutcomes, validate_process_schema_v1
+from messaging.registry.processes import BotDefinition, BotHandler, BotParams, BotProcess, BotRequest, BotResponse, NotifyDefinition, NotifyHandler, NotifyNoResponse, NotifyParams, NotifyProcess, NotifyRequest, NotifyResponse, ProcessOutcomes, validate_process_schema_v1
 from messaging.registry.processes import register_processes
-from messaging.registrations.processes.contracts import REGISTRATION_SCHEMA_VERSION, SUPPORTED_REGISTRATION_SCHEMAS, _validate_version, normalize_result, validate_definition_signature, validate_handler_signature
+from messaging.registry.processes.contracts import REGISTRATION_SCHEMA_VERSION, SUPPORTED_REGISTRATION_SCHEMAS, _validate_version, normalize_result, validate_definition_signature, validate_handler_signature
 from messaging.registry.processes.context import _ProcessContext
-from messaging.registry.processes.discovery import discover_contract
+from messaging.registry.processes.discovery import _source_digest, discover_contract
 from messaging.common.primitives import _freeze
 from messaging.registry.processes.test_support import (
     BOT_CALLS, bot_definition, bot_handle, notify_definition, notify_handle,
     positional_definition, wrong_bot_handler,
 )
+
+
+class TestVersionMetadata(unittest.TestCase):
+    def test_only_the_metadata_only_messaging_initializer_ignores_version_bumps(self):
+        previous = b'__version__ = "16.0.0rc1"\n'
+        current = b'__version__ = "16.0.0rc2"\n'
+        self.assertEqual(_source_digest('messaging', previous), _source_digest('messaging', current))
+        self.assertNotEqual(
+            _source_digest('messaging', current),
+            _source_digest('messaging', current + b'import operator\n'),
+        )
+        self.assertNotEqual(_source_digest('qota_preset', previous), _source_digest('qota_preset', current))
 
 
 class TestSpecializedProcesses(ProcessFixtures, unittest.TestCase):

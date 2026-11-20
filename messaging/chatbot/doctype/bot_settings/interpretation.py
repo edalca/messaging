@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 
 import frappe
 
-from messaging.registrations.ai_providers import InvalidInterpretation, ProviderTimeout, ProviderUnavailable, DecisionRequest, DecisionOutcome, Message, FlowReference, SemanticContext, validate_response
+from messaging.communication.doctype.process_definition.approval import is_current
+from messaging.registry.ai_providers import InvalidInterpretation, ProviderTimeout, ProviderUnavailable, DecisionRequest, DecisionOutcome, DecisionEvidence, Message, FlowReference, SemanticContext, validate_response
 from messaging.chatbot.doctype.bot_flow.localization import text as localized_text
 from messaging.chatbot.doctype.bot_parameter.bot_parameter import (
 	captured_values,
@@ -44,8 +45,13 @@ def build_request(text, context, flows, language, *, greeting_available=False, h
     return request, {value: key for key, value in refs.items()}
 
 
-def normalize_response(result, request, refs, *, minimum_confidence):
+def normalize_response(result, request, refs, *, minimum_confidence=None, policy=None):
+    if type(result) is DecisionEvidence:
+        from .decision_policy import interpret_evidence
+        return interpret_evidence(result, request, refs, policy)
     validate_response(result, request)
+    if policy is not None:
+        minimum_confidence = policy.minimum_confidence
     if type(minimum_confidence) not in (int, float) or not math.isfinite(minimum_confidence) or not 0 <= minimum_confidence <= 1:
         raise InvalidInterpretation('Invalid confidence threshold')
     if result.confidence < minimum_confidence:
@@ -85,8 +91,7 @@ def catalog():
 		doc.check_permission("read")
 		if doc.name == settings.registration_flow or doc.name in assigned:
 			continue
-		from messaging.communication.doctype.process_definition.validation import test_state
-		if test_state(doc, remember_invalid=True) != 'Passed':
+		if not is_current(doc):
 			continue
 		parameters = {}
 		for row in doc.parameters:
@@ -186,6 +191,7 @@ def interpret(text, context, flows, active_parameters, settings, *, turn_name=No
 		return Decision(outcome="disabled")
 	from dataclasses import asdict
 	from messaging.chatbot.doctype.ai_configuration.execution import run
+	from messaging.chatbot.doctype.ai_configuration.policy import profile_policy
 	from messaging.chatbot.doctype.ai_configuration.ai_configuration import resolve_configuration, diagnose, error_code
 	from messaging.chatbot.doctype.bot_settings.language import resolve_process_language
 	from messaging.chatbot.doctype.ai_request_log.ai_request_log import evaluation_scope
@@ -196,14 +202,15 @@ def interpret(text, context, flows, active_parameters, settings, *, turn_name=No
 	transformed, occurrences = recognize(text, parameters)
 	request, refs = build_request(transformed, context, flows, resolve_process_language(),
 		greeting_available=bool(settings.greeting_enabled), human_attention_available=bool(settings.human_attention_enabled))
-	configuration, provider, values = resolve_configuration(settings.active_ai_configuration, settings=settings)
 	# A durable Processing turn prevents replay after a provider call or failed log write.
 	if turn_name:
 		frappe.db.commit()
+	configuration, provider, values = resolve_configuration(settings.active_ai_configuration, settings=settings)
+	policy = profile_policy(configuration, provider)
 	try:
 		with evaluation_scope(turn_name, configuration=configuration.name):
-			result = run(provider, values, request)
-		decision = normalize_response(result, request, refs, minimum_confidence=values['minimum_confidence'])
+			result = run(provider, values, request, policy=policy) if policy is not None else run(provider, values, request)
+		decision = normalize_response(result, request, refs, policy=policy, minimum_confidence=values.get('minimum_confidence'))
 	except Exception as exc:
 		diagnose(configuration, error_code(exc))
 		raise

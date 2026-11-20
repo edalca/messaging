@@ -40,6 +40,8 @@ def synchronize_registry():
     with document_savepoint():
         for app in sorted(installed_applications()):
             result[app] = synchronize_application(app)
+        from messaging.registry.ai_providers.operations import retire_uninstalled_providers
+        retire_uninstalled_providers()
         from messaging.chatbot.doctype.ai_evaluation_run.dependencies import dependencies_changed
         dependencies_changed()
     return result

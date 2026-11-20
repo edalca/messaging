@@ -1,10 +1,12 @@
-from messaging.registrations.communication_providers import normalize_definitions
+from messaging.registry.communication_providers import normalize_definitions
 from messaging.communication.doctype.communication_provider import communication_provider as provider_catalog
 """Controlled synthetic declarations; no network, durable fixtures or external providers."""
 from copy import deepcopy
 import inspect
 import json
 import multiprocessing
+from secrets import choice
+from string import ascii_lowercase
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +18,7 @@ from messaging.security.execution_context import _authenticated_adapter
 from messaging.communication.doctype.communication_provider.communication_provider import catalog_sync
 from messaging.communication.doctype.communication_provider_value.communication_provider_value import parameter_schema, transport_parameters
 from messaging.communication.doctype.communication_channel_account.communication_channel_account import resolve_binding, account_provider
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled, get_provider_states
 
 
@@ -58,7 +61,7 @@ PROBE = dict(id='TSTPV', name='Synthetic provider', app='messaging', version='1.
 def declaration(raw):
 	"""Build typed synthetic declarations from mutable test scenario data."""
 	import sys
-	from messaging.registrations.communication_providers import CommunicationProvider, CommunicationProviderParameter, CommunicationOperations
+	from messaging.registry.communication_providers import CommunicationProvider, CommunicationProviderParameter, CommunicationOperations
 	if type(raw) is CommunicationProvider:
 		return raw
 	try:
@@ -87,24 +90,26 @@ def sync_communication_providers():
 
 class TestCommunicationProvider(unittest.TestCase):
 	def setUp(self):
+		from messaging.communication.doctype.communication_channel_account.test_communication_channel_account import registered_providers
+
 		frappe.set_user('Administrator')
 		self.declarations = [deepcopy(PROBE), dict(deepcopy(PROBE), id='TSTOT', parameters=[parameter('other_key')])]
-		from messaging import registry as registrations
-		original = registrations._installed_declarations
-		def installed(app, kind):
-			if kind == 'communication_providers' and app == 'messaging':
-				return tuple(declaration(row) for row in self.declarations)
-			return original(app, kind)
-		self.mock = patch.object(registrations, '_installed_declarations', side_effect=installed)
-		self.mock.start(); self.addCleanup(self.mock.stop)
+		self.enterContext(registered_providers(self.declarations))
 		sync_communication_providers()
 
 	def tearDown(self):
 		frappe.db.rollback(); frappe.set_user('Administrator')
 
-	def channel(self, provider='TSTPV', enabled=0, parameters=None):
-		return frappe.get_doc(dict(doctype='Communication Channel', provider=provider, channel_name='Synthetic channel', enabled=enabled,
+	def channel(self, provider='TSTPV', enabled=0, parameters=None, *, channel_name=None):
+		if channel_name is None:
+			suffix = ''.join(choice(ascii_lowercase) for _ in range(10))
+			channel_name = f'Synthetic channel {suffix}'
+		channel = frappe.get_doc(dict(doctype='Communication Channel', provider=provider, channel_name=channel_name,
 			parameters=parameters if parameters is not None else [dict(parameter_key='app_id', value='"synthetic-app"'), dict(parameter_key='app_secret', secret_value='synthetic-secret')])).insert()
+		if enabled:
+			set_channel_status(channel.name, 'Enabled')
+			channel.reload()
+		return channel
 
 	def account(self, channel, account_id='fake-001', *, document_name=None, **kw):
 		return frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel.name, account_id=account_id,
@@ -170,30 +175,32 @@ class TestCommunicationProvider(unittest.TestCase):
 
 	def test_registration_rejects_invalid_ids_owners_routes_and_duplicates(self):
 		for invalid in [dict(PROBE,id='bad_id'), dict(PROBE,id='ABCD'), dict(PROBE,id='ABCDEFGHIJK'), dict(PROBE,app='frappe'), dict(PROBE,operations=dict(PROBE['operations'],send='os.system'))]:
-			self.declarations = [invalid]
+			self.declarations[:] = [invalid]
 			with self.assertRaises(frappe.ValidationError): sync_communication_providers()
-		self.declarations=[PROBE,PROBE]
+		self.declarations[:] = [PROBE, PROBE]
 		with self.assertRaises(frappe.ValidationError): sync_communication_providers()
 		with self.assertRaises(frappe.ValidationError):
 			normalize_definitions('absent_app', [declaration(PROBE)])
-		self.declarations=[]
+		self.declarations.clear()
 		with self.assertRaises(frappe.ValidationError): provider_catalog.provider_definition('TSTPV')
 
 	def test_parameter_schema_rejects_unsafe_and_ambiguous_definitions(self):
 		for parameters in [[parameter('same'),parameter('same',scope='Account')], [parameter('bad',scope='Global')],
 			[parameter('bad','Code')], [parameter('bad','Table',options='User')], [parameter('bad','Password',default_value='unsafe')],
 			[parameter('bad','Select',options='one\none')], [parameter('bad','Data',options='python')]]:
-			self.declarations=[dict(PROBE,parameters=parameters)]
+			self.declarations[:] = [dict(PROBE, parameters=parameters)]
 			with self.assertRaises(frappe.ValidationError): sync_communication_providers()
 
-	def test_schema_evolution_preserves_values_secrets_and_rejects_incompatibility(self):
+	def test_schema_evolution_preserves_values_secrets_and_reports_incompatibility(self):
 		set_provider_enabled('TSTPV', True); set_provider_enabled('TSTOT', True)
 		for field, value in [('field_type', 'Float'), ('scope', 'Account')]:
 			original=deepcopy(self.declarations[0]['parameters'])
 			self.declarations[0]['parameters'][2][field]=value
-			with self.assertRaises(frappe.ValidationError):sync_communication_providers()
+			result = sync_communication_providers()
+			self.assertFalse(result['configurations']['TSTPV']['incompatible_channels'])
 			self.declarations[0]['parameters']=original
-		channel=self.channel(); row=channel.parameters[1]; name=row.name
+		sync_communication_providers()
+		channel=self.channel(enabled=1); row=channel.parameters[1]; name=row.name
 		self.declarations[0]['version']='2.0'; self.declarations[0]['parameters'].append(parameter('new_value',default_value='new'))
 		sync_communication_providers(); channel.reload()
 		self.assertEqual(channel.parameters[1].name,name)
@@ -204,14 +211,17 @@ class TestCommunicationProvider(unittest.TestCase):
 			if change=='type':self.declarations[0]['parameters'][0]['field_type']='Int'
 			elif change=='scope':self.declarations[0]['parameters'][0]['scope']='Account'
 			else:self.declarations[0]['parameters']=self.declarations[0]['parameters'][1:]
-			with self.assertRaises(frappe.ValidationError):sync_communication_providers()
+			result = sync_communication_providers()
+			self.assertEqual(result['configurations']['TSTPV']['incompatible_channels'], [channel.name])
+			self.assertEqual(channel.reload().status, 'Enabled')
+			self.assertEqual(row.get_password('secret_value'), 'synthetic-secret')
 			self.declarations[0]['parameters']=original
 
 	def test_required_scopes_types_and_canonical_values(self):
 		set_provider_enabled('TSTPV', True); set_provider_enabled('TSTOT', True)
 		incomplete=self.channel(parameters=[])
-		incomplete.enabled=1
-		with self.assertRaises(frappe.ValidationError):incomplete.save()
+		with self.assertRaises(frappe.ValidationError):
+			set_channel_status(incomplete.name, 'Enabled')
 		self.declarations[0]['parameters'].append(parameter('multiline','Small Text'));sync_communication_providers()
 		channel=self.channel();channel.append('parameters',dict(parameter_key='multiline',value=json.dumps('Hola {{name}}.\n¡Gracias! 🙂')));channel.save();channel.reload()
 		self.assertEqual(json.loads(channel.parameters[-1].value),'Hola {{name}}.\n¡Gracias! 🙂')
@@ -252,7 +262,8 @@ class TestCommunicationProvider(unittest.TestCase):
 		finally:frappe.set_user('Administrator')
 		self.assertNotIn('replacement-secret',frappe.get_doc(channel.doctype,channel.name).as_json())
 		with self.assertRaises(frappe.ValidationError):frappe.rename_doc(channel.doctype,channel.name,'new-identity')
-		channel.enabled=0;channel.set('parameters',[channel.parameters[0]]);channel.save()
+		set_channel_status(channel.name, 'Disabled')
+		channel.reload();channel.set('parameters',[channel.parameters[0]]);channel.save()
 		self.assertFalse(frappe.db.get_value('__Auth',dict(doctype='Communication Provider Value',name=name,fieldname='secret_value'),'name',order_by='name'))
 
 	def test_value_ownership_cannot_be_stolen_and_no_direct_child_write(self):
@@ -286,7 +297,8 @@ class TestCommunicationProvider(unittest.TestCase):
 		set_provider_enabled('TSTPV',True)
 		with _authenticated_adapter('TSTPV', a.name):
 			resolve_binding('TSTPV',a.name,incoming=True)
-		one.enabled=0;one.save()
+		set_channel_status(one.name, 'Disabled')
+		one.reload()
 		with self.assertRaises(frappe.PermissionError):resolve_binding('TSTPV',a.name)
 		resolve_binding('TSTPV',b.name)
 		a.channel=two.name
@@ -422,7 +434,7 @@ class TestCommunicationProvider(unittest.TestCase):
 		sync_communication_providers()
 		self.assertTrue(get_provider_enabled('TSTPV'))
 		self.assertEqual(frappe.db.get_value('Communication Provider', 'TSTPV', 'modified'), revision)
-		doc = frappe.get_doc('Communication Provider','TSTPV');doc.enabled=0
+		doc = frappe.get_doc('Communication Provider','TSTPV');doc.status='Disabled'
 		with self.assertRaises(frappe.PermissionError):doc.save(ignore_permissions=True)
 		self.assertTrue(get_provider_enabled('TSTPV'))
 		for value in ('true', 'false', None, 2, [], {}):
@@ -445,7 +457,7 @@ class TestCommunicationProvider(unittest.TestCase):
 			self.channel(enabled=0)
 		channel.channel_name = 'Edited disabled channel'
 		channel.save()
-		self.assertEqual(channel.enabled, 0)
+		self.assertEqual(channel.status, 'Disabled')
 		self.assertEqual(channel.channel_name, 'Edited disabled channel')
 		self.assertEqual(frappe.db.get_value('Communication Channel', channel.name, 'single_provider_key'), 'TSTPV')
 
@@ -488,7 +500,7 @@ class TestCommunicationProvider(unittest.TestCase):
 		first = self.channel()
 		second = self.channel()
 		self.assertEqual(first.name, 'fixed-one')
-		self.assertNotEqual(second.name, first.name)
+		self.assertEqual(second.name, second.channel_name.lower().replace(' ', '_'))
 		self.assertEqual(frappe.db.get_value('Communication Provider', 'TSTPV', 'single_channel'), 0)
 		self.declarations[1]['single_channel'] = True
 		sync_communication_providers()
@@ -545,22 +557,16 @@ class TestCommunicationProvider(unittest.TestCase):
 
 
 def concurrent_single_channel_insert(site, sites_path, barrier, results):
+	from messaging.communication.doctype.communication_channel_account.test_communication_channel_account import registered_providers
+
 	frappe.init(site=site, sites_path=sites_path)
 	frappe.connect()
 	frappe.set_user('Administrator')
-	from messaging import registry as registrations
-	original = registrations._installed_declarations
-	def installed(app, kind):
-		if kind == 'communication_providers' and app == 'messaging':
-			row = deepcopy(PROBE)
-			row['single_channel'] = True
-			return (declaration(row),)
-		return original(app, kind)
 
 	try:
-		with patch.object(registrations, '_installed_declarations', side_effect=installed):
+		with registered_providers([dict(PROBE, single_channel=True)]):
 			barrier.wait(timeout=20)
-			doc = frappe.get_doc(dict(doctype='Communication Channel', provider='TSTPV', channel_name='Concurrent channel', enabled=0)).insert()
+			doc = frappe.get_doc(dict(doctype='Communication Channel', provider='TSTPV', channel_name='Concurrent channel')).insert()
 			frappe.db.commit()
 			results.put(dict(name=doc.name))
 	except Exception as exc:
@@ -628,7 +634,7 @@ class TestProviderDeclarations(unittest.TestCase):
 class TestTypedCapabilities(unittest.TestCase):
     def test_public_capabilities_preserve_serialization_and_reject_unknown_values(self):
         from dataclasses import replace
-        from messaging.registrations.communication_providers import CAPABILITIES, CommunicationCapability
+        from messaging.registry.communication_providers import CAPABILITIES, CommunicationCapability
         from messaging.presets.communication_providers.emulr import definition
         emulator = definition()
         self.assertEqual(len(CommunicationCapability), 11)

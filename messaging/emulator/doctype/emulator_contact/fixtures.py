@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import frappe
 
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.chatbot.doctype.bot_settings.interpretation import Decision
 from messaging.communication.doctype.communication_provider.communication_provider import (
 	get_provider_states,
@@ -30,7 +31,8 @@ def bind_emulator(case):
 	set_provider_enabled(PROVIDER, True)
 	case.created_channel = False
 	if not frappe.db.exists('Communication Channel', CHANNEL):
-		frappe.get_doc(dict(doctype='Communication Channel', provider=PROVIDER, channel_name='Channel Emulator', enabled=1)).insert()
+		channel = frappe.get_doc(dict(doctype='Communication Channel', provider=PROVIDER, channel_name='Channel Emulator')).insert()
+		set_channel_status(channel.name, 'Enabled')
 		case.created_channel = True
 	frappe.db.set_value('Communication Channel', CHANNEL, case.quota_policy, update_modified=False)
 	frappe.clear_document_cache('Communication Channel', CHANNEL)

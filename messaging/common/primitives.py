@@ -20,6 +20,14 @@ def identity_key(*parts):
 	return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode()).hexdigest()
 
 
+def enabled_language(code):
+	"""Return the exact identifier of an enabled native Language record."""
+	if not isinstance(code, str) or not code or code != code.strip():
+		return None
+	row = frappe.db.get_value('Language', code, ['name', 'language_code', 'enabled'], as_dict=True)
+	return row.name if row and row.name == row.language_code == code and row.enabled == 1 else None
+
+
 def decimal_json(value):
 	"""Encode finite Decimal values as exact text; consumers restore by input type."""
 	if type(value) is Decimal and value.is_finite():

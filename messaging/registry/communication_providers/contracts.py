@@ -3,7 +3,8 @@ from dataclasses import asdict, dataclass, field, fields
 from enum import StrEnum
 import inspect
 import re
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, NotRequired, TypedDict
+from types import MappingProxyType
 
 import frappe
 from frappe import _
@@ -30,6 +31,72 @@ class CommunicationCapability(StrEnum):
 	TEMPLATE_STATUS = 'template_status'
 
 
+class TemplateScope(StrEnum):
+	CHANNEL = 'Channel'
+	ACCOUNT = 'Account'
+
+
+class TemplateBinding(TypedDict):
+	channel: str
+	account: str | None
+
+
+class TemplateDescription(TypedDict):
+	key: str
+	revision: str
+
+
+class ExternalTemplateReading(TemplateDescription):
+	reference: str
+	status: str
+	content: dict[str, Any]
+	issue: str | None
+	publication: Literal['pending', 'rejected', 'confirmed']
+	metadata: NotRequired[dict[str, str]]
+
+
+class TemplateDraft(TypedDict):
+	template_name: str
+	language: NotRequired[str]
+	provider_language: NotRequired[str]
+	header: str
+	body: str
+	footer: str
+	variables: list[str]
+	parameters: dict[str, str | int | float | bool | None]
+
+
+class TemplateProjection(TypedDict):
+	draft: TemplateDraft
+	delivery: dict[str, Any]
+
+
+class PublishedTemplateSnapshot(TemplateProjection):
+	provider: str
+	scope: str
+	key: str
+	reference: str
+	remote_revision: str
+	local_revision: str
+
+
+class TemplatePublicationResult(TypedDict):
+	outcome: Literal['submitted', 'rejected', 'unknown']
+	reference: NotRequired[str]
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateLanguage:
+	code: str
+	label: str
+	language: str | None = None
+
+	def __post_init__(self):
+		values = (self.code, self.label) if self.language is None else (self.code, self.label, self.language)
+		if any(not isinstance(value, str) or not value or len(value) > 140
+			or value != value.strip() or not value.isprintable() for value in values):
+			raise ValueError('Invalid provider template language.')
+
 
 @dataclass(frozen=True, slots=True)
 class CommunicationProviderParameter:
@@ -55,14 +122,24 @@ class CommunicationOperations:
 	validate_notification: Callable[[dict[str, Any]], bool] | None = None
 	authenticate_ingress: Callable[[Mapping[str, Any], Any, dict[str, Any]], dict[str, Any]] | None = None
 	prepare_account_id: Callable[[Any], str] | None = None
+	# A string is the original destination to validate. None selects rule redirection.
 	notification_destination: Callable[[Any, Any, str | None], dict[str, Any]] | None = None
 	validate_template: Callable[[Any, dict[str, Any] | None], bool] | None = None
 	template_variable_limits: Callable[[Any], dict[str, int | None]] | None = None
 	resolve_provider_template: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 	prepare_provider_template: Callable[[dict[str, Any]], dict[str, Any]] | None = None
-	query_template_status: Callable[[Any, Any], dict[str, Any]] | None = None
+	query_template_status: Callable[[Any, str | None], ExternalTemplateReading | dict[str, Any] | None] | None = None
 	template_available: Callable[[Any, Any], dict[str, Any]] | None = None
 	apply_template_status_update: Callable[[Any], dict[str, Any]] | None = None
+	mark_incoming_read: Callable[[dict[str, Any]], None] | None = None
+	initialize_channel: Callable[[Any], None] | None = None
+	template_scope_key: Callable[[TemplateBinding], str] | None = None
+	describe_template: Callable[[Any], TemplateDescription] | None = None
+	list_templates: Callable[[TemplateBinding], list[ExternalTemplateReading]] | None = None
+	project_template: Callable[[Any, dict], TemplateProjection] | None = None
+	prepare_template_publication: Callable[[Any, dict], dict] | None = None
+	publish_template: Callable[[TemplateBinding, dict], TemplatePublicationResult] | None = None
+	verify_template_revision: Callable[[TemplateBinding, PublishedTemplateSnapshot], str | Literal[False]] | None = None
 
 	def __post_init__(self):
 		if any(value is not None and not callable(value) for value in (getattr(self, f.name) for f in fields(self))):
@@ -83,6 +160,12 @@ class CommunicationProvider:
 	single_channel: bool = False
 	fixed_channel_id: str | None = None
 	ingress_parameters: tuple[tuple[str, tuple[str, ...]], ...] = ()
+	template_scope: TemplateScope = field(default=TemplateScope.CHANNEL, kw_only=True)
+	template_languages: tuple[TemplateLanguage, ...] = field(default=(), kw_only=True)
+	# The first format is the default. Each entry declares whether a variable can be reused.
+	template_parameter_formats: tuple[tuple[str, bool], ...] = field(default=(), kw_only=True)
+	template_statuses: Mapping[str, Mapping[str, bool]] = field(default_factory=dict, kw_only=True)
+	template_publication_fields: tuple[tuple[str, str, str, tuple[str, ...]], ...] = field(default=(), kw_only=True)
 	registration_schema_version: str = field(default=REGISTRATION_SCHEMA_VERSION, kw_only=True)
 
 	def __post_init__(self):
@@ -93,6 +176,24 @@ class CommunicationProvider:
 		object.__setattr__(self, 'capabilities', capabilities)
 		object.__setattr__(self, 'parameters', tuple(self.parameters))
 		object.__setattr__(self, 'ingress_parameters', tuple((scope, tuple(keys)) for scope, keys in self.ingress_parameters))
+		object.__setattr__(self, 'template_scope', TemplateScope(self.template_scope))
+		object.__setattr__(self, 'template_languages', tuple(self.template_languages))
+		object.__setattr__(self, 'template_parameter_formats', tuple(
+			(code, repeat) for code, repeat in self.template_parameter_formats
+		))
+		if not isinstance(self.template_statuses, Mapping) or any(
+			not isinstance(status, str) or not status.strip() or status != status.strip() or len(status) > 140
+			or any(ord(char) < 32 for char in status)
+			or not isinstance(policy, Mapping) or set(policy) != {'can_send'} or type(policy['can_send']) is not bool
+			for status, policy in self.template_statuses.items()
+		):
+			raise ValueError('Invalid provider template statuses.')
+		object.__setattr__(self, 'template_statuses', MappingProxyType({
+			status: MappingProxyType(dict(policy)) for status, policy in self.template_statuses.items()
+		}))
+		object.__setattr__(self, 'template_publication_fields', tuple(
+			(key, label, kind, tuple(options)) for key, label, kind, options in self.template_publication_fields
+		))
 		_definition_values(self)
 
 
@@ -106,6 +207,32 @@ def _definition_values(raw):
 	row['parameters'] = [asdict(p) for p in raw.parameters]
 	row['capabilities'] = [capability.value for capability in raw.capabilities]
 	row['operations'] = {field.name: getattr(raw.operations, field.name) for field in fields(raw.operations) if getattr(raw.operations, field.name) is not None}
+	row['template_scope'] = raw.template_scope.value
+	if raw.template_scope == TemplateScope.CHANNEL:
+		row.pop('template_scope')
+	if raw.template_languages:
+		if (CommunicationCapability.TEMPLATES not in raw.capabilities
+			or any(type(entry) is not TemplateLanguage for entry in raw.template_languages)
+			or len({entry.code for entry in raw.template_languages}) != len(raw.template_languages)):
+			frappe.throw(_("Invalid provider template language catalog."))
+		row['template_languages'] = {entry.code: asdict(entry) for entry in raw.template_languages}
+	else:
+		row.pop('template_languages')
+	formats = raw.template_parameter_formats
+	if formats:
+		selector = next((p for p in raw.parameters if (p.scope, p.parameter_key) == ('Template', 'parameter_format')), None)
+		if (CommunicationCapability.TEMPLATES not in raw.capabilities or not selector or selector.field_type != 'Select'
+			or any(not isinstance(code, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,31}', code)
+				or type(repeat) is not bool for code, repeat in formats)
+			or len(dict(formats)) != len(formats) or selector.options.splitlines() != [code for code, _ in formats]):
+			frappe.throw(_("Invalid provider template parameter formats."))
+	else:
+		row.pop('template_parameter_formats')
+	row['template_statuses'] = {status: dict(value) for status, value in raw.template_statuses.items()}
+	if not raw.template_statuses:
+		row.pop('template_statuses')
+	if not raw.template_publication_fields:
+		row.pop('template_publication_fields')
 	selection = raw.ingress_parameters
 	if any(not isinstance(scope, str) for scope, keys in selection) or len({scope for scope, keys in selection}) != len(selection):
 		frappe.throw(_("Invalid ingress authentication parameter declaration."))
@@ -117,16 +244,37 @@ def _definition_values(raw):
 	if (not isinstance(caps, (list, tuple)) or any(not isinstance(c, str) for c in caps) or not set(caps) <= CAPABILITIES
 		or len(set(caps)) != len(caps) or 'text' not in caps or not isinstance(ops, dict) or not {'resolve_account', 'send'} <= set(ops) or not set(ops) <= OPERATIONS):
 		frappe.throw(_("Invalid channel provider registration."))
-	if (('provider_templates' in caps and not {'resolve_provider_template', 'prepare_provider_template'} <= set(ops))
+	if (('provider_templates' in caps and ('prepare_provider_template' not in ops
+			or not raw.template_statuses and 'resolve_provider_template' not in ops))
 		or (set(ops) & {'resolve_provider_template', 'prepare_provider_template'} and 'provider_templates' not in caps)
 		or ('notification_template_required' in caps and not {'templates', 'provider_templates'} & set(caps))
 		or ('templates' in caps and 'validate_template' not in ops)
 		or ('template_variable_limits' in ops and 'templates' not in caps)
-		or ('template_status' in caps and not {'query_template_status', 'template_available'} <= set(ops))
+		or ('template_status' in caps and ('query_template_status' not in ops
+			or not raw.template_statuses and 'template_available' not in ops))
 		or (set(ops) & {'query_template_status', 'template_available', 'apply_template_status_update'} and 'template_status' not in caps)
 		or ('notification_redirect_required' in caps and 'recipient_redirect' not in caps)
 		or ('recipient_redirect' in caps and 'notification_destination' not in ops)):
 		frappe.throw(_("Invalid channel provider registration."))
+	managed = {'template_scope_key', 'describe_template', 'project_template'}
+	publication = {'prepare_template_publication', 'publish_template'}
+	if (raw.template_scope == TemplateScope.ACCOUNT and 'templates' not in caps
+		or raw.template_statuses and (not {'templates', 'provider_templates', 'template_status'} <= set(caps)
+			or not managed <= set(ops)
+			or any(p.field_type == 'Password' and p.scope == 'Template' for p in raw.parameters))
+		or not raw.template_statuses and set(ops) & (managed | publication | {'list_templates', 'verify_template_revision'})
+		or set(ops) & publication and not publication <= set(ops)
+		or raw.template_publication_fields and not publication <= set(ops)):
+		frappe.throw(_("Invalid provider template operations."))
+	field_keys = set()
+	for key, label, kind, options in raw.template_publication_fields:
+		if (not isinstance(key, str) or not re.fullmatch('[a-z][a-z0-9_]*', key)
+			or key == 'confirm_conflict' or key in field_keys or not isinstance(label, str) or not label.strip()
+			or kind not in ('Data', 'Small Text', 'Select', 'Check')
+			or (kind == 'Select') != bool(options)
+			or any(not isinstance(option, str) or not option.strip() or '\n' in option for option in options)):
+			frappe.throw(_("Invalid provider template publication fields."))
+		field_keys.add(key)
 	if not isinstance(row.get('version'), str) or not row['version'].strip() or len(row['version']) > 140:
 		frappe.throw(_("Invalid channel provider registration."))
 	row['parameters'] = validate_parameter_schema(row.get('parameters', []))
@@ -235,6 +383,10 @@ OPERATION_ARGUMENTS = {
 	'validate_template': (None, None), 'template_variable_limits': (None,),
 	'resolve_provider_template': (None,), 'prepare_provider_template': (None,),
 	'query_template_status': (None, None), 'template_available': (None, None),
-	'apply_template_status_update': (None,),
+	'apply_template_status_update': (None,), 'mark_incoming_read': (None,),
+	'initialize_channel': (None,),
+	'template_scope_key': (None,), 'describe_template': (None,), 'list_templates': (None,),
+	'project_template': (None, None), 'prepare_template_publication': (None, None),
+	'publish_template': (None, None), 'verify_template_revision': (None, None),
 }
-OPERATIONS = frozenset(('resolve_account', 'send', 'available', 'validate_notification', 'authenticate_ingress', 'prepare_account_id', 'notification_destination', 'validate_template', 'template_variable_limits', 'resolve_provider_template', 'prepare_provider_template', 'query_template_status', 'template_available', 'apply_template_status_update'))
+OPERATIONS = frozenset(OPERATION_ARGUMENTS)

@@ -6,10 +6,14 @@
  "engine": "InnoDB",
  "field_order": [
   "template_name",
+  "provider_language",
   "language",
+  "language_mapping",
   "status",
   "column_break_tkmh",
   "channel",
+  "account",
+  "sync_state",
   "provider_status",
   "content_section",
   "header",
@@ -18,11 +22,20 @@
   "variables_section",
   "template_variables",
   "revision",
+  "published_revision",
+  "unverified_revision",
+  "last_sync_error",
   "provider_section",
   "parameter_controls",
   "parameters",
   "external_status_section",
-  "statuses"
+  "statuses",
+  "published_snapshot",
+  "externally_observed",
+  "publication_request",
+  "external_scope",
+  "external_key",
+  "previous_name"
  ],
  "fields": [
   {
@@ -37,7 +50,7 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
-   "label": "Status",
+   "label": "Administrative Status",
    "options": "Inactive\nActive",
    "read_only": 1,
    "reqd": 1
@@ -74,17 +87,30 @@
    "options": "Communication Template Parameter"
   },
   {
+   "fieldname": "provider_language",
+   "fieldtype": "Select",
+   "label": "Provider Language",
+   "hidden": 1
+  },
+  {
    "fieldname": "language",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Language",
-   "options": "Language",
-   "reqd": 1
+   "options": "Language"
+  },
+  {
+   "fieldname": "language_mapping",
+   "fieldtype": "Select",
+   "label": "Language Mapping",
+   "options": "\nAutomatic\nProvisional\nManual\nUnassigned",
+   "read_only": 1,
+   "hidden": 1
   },
   {
    "fieldname": "revision",
    "fieldtype": "Data",
-   "label": "Content Revision",
+   "label": "Local Revision",
    "read_only": 1
   },
   {
@@ -96,7 +122,7 @@
    "reqd": 1
   },
   {
-   "description": "Aggregated external status. Per-scope values are listed below and are not changed by administrative status.",
+   "description": "Latest external status reported for this template scope.",
    "fieldname": "provider_status",
    "fieldtype": "Data",
    "label": "Provider Status",
@@ -135,6 +161,83 @@
   {
    "fieldname": "column_break_tkmh",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "label": "Communication Channel Account",
+   "options": "Communication Channel Account",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "sync_state",
+   "fieldtype": "Select",
+   "label": "Synchronization Status",
+   "options": "Local\nPending\nPublishing\nSynchronized\nError\nConflict",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "published_revision",
+   "fieldtype": "Data",
+   "label": "Published Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unverified_revision",
+   "fieldtype": "HTML",
+   "label": "Published Revision",
+   "hidden": 1
+  },
+  {
+   "fieldname": "last_sync_error",
+   "fieldtype": "Data",
+   "label": "Synchronization Diagnostic",
+   "read_only": 1
+  },
+  {
+   "fieldname": "published_snapshot",
+   "fieldtype": "Long Text",
+   "label": "Published Snapshot",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "externally_observed",
+   "fieldtype": "Long Text",
+   "label": "External Reading",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "publication_request",
+   "fieldtype": "Long Text",
+   "label": "Publication Request",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "external_scope",
+   "fieldtype": "Data",
+   "label": "External Scope",
+   "hidden": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "external_key",
+   "fieldtype": "Data",
+   "label": "External Template Identity",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_name",
+   "fieldtype": "Data",
+   "label": "Previous Template Identity",
+   "hidden": 1,
+   "read_only": 1,
+   "search_index": 1
   }
  ],
  "icon": "layout-template",

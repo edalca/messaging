@@ -6,9 +6,10 @@ import re
 import frappe
 from frappe import _
 
+from messaging.communication.doctype.process_definition.approval import is_current
 from messaging.chatbot.doctype.bot_flow.contract import canonical_contract, validate_bindings
 from messaging.chatbot.doctype.bot_flow_state.bot_flow_state import state_name
-from messaging.registrations.processes import FIELD_TYPES, _identifier, validate_output_data
+from messaging.registry.processes import FIELD_TYPES, _identifier, validate_output_data
 
 CONSUMERS = {
     'registration': ('registration_flow', 'registration_states', 'registration_fields'),
@@ -118,7 +119,7 @@ def validate_selection(settings, consumer):
     if selected and settings.get(enabled_field):
         flow = frappe.get_doc('Bot Flow', selected)
         flow.check_permission('read')
-        if flow.lifecycle_status != 'Enabled':
+        if (flow.status != 'Enabled' or not is_current(flow)):
             raise frappe.ValidationError(_('Select an effectively enabled Bot Flow.'))
 
 
@@ -145,7 +146,7 @@ def configuration(settings, consumer, *, operational=False, synchronize_fields=F
         return None
     flow = frappe.get_doc('Bot Flow', selected, for_update=operational and not read_only)
     flow.check_permission('read')
-    if operational and not read_only and flow.lifecycle_status != 'Enabled':
+    if operational and not read_only and (flow.status != 'Enabled' or not is_current(flow)):
         raise frappe.ValidationError(_('Select an effectively enabled Bot Flow.'))
     outputs = output_catalog(flow)
     states = selected_states(flow, outputs, rows)
@@ -184,14 +185,10 @@ def configuration(settings, consumer, *, operational=False, synchronize_fields=F
     elif seen != set(union):
         raise ConsumerIssue(_('Output fields no longer match the selected contract. Save Bot Settings again.'), 'fields')
     if operational:
-        from messaging.communication.doctype.process_definition.validation import require_approved
+        from messaging.communication.doctype.process_definition.approval import require_approved
         if flow.status != 'Enabled' or not states:
             raise ConsumerIssue(_('Enable and validate the Bot Flow and select at least one Complete Flow state.'), 'states')
-        if read_only:
-            if flow.test_state() != 'Passed':
-                raise frappe.ValidationError(_('Save and validate the Flow before activating it.'))
-        else:
-            require_approved(flow)
+        require_approved(flow)
         for row in flow.parameters:
             from messaging.chatbot.doctype.bot_parameter.bot_parameter import get_request_phrase
             if not frappe.db.get_value('Bot Parameter', row.parameter, 'enabled'):
@@ -216,14 +213,15 @@ def selected_values(config, status, data):
         raise frappe.ValidationError(_('The functional state is not authorized for this operation.'))
     declared = config['outputs'][status]['fields']
     validate_output_data(declared, data)
+    if any(key not in data for key in config['selected'] if key in declared):
+        raise frappe.ValidationError(_('Process result does not match the selected output fields.'))
     return {key: dict(label=row.label, value=data[key], type=declared[key])
         for key, row in config['selected'].items() if key in declared}
 
 
 def revision(config):
-    from messaging.communication.doctype.process_definition.validation import fingerprint
     return hashlib.sha256(canonical_contract(dict(flow=config['flow'].name,
-        fingerprint=fingerprint(config['flow']), states=sorted(config['states']),
+        fingerprint=config['flow'].approval_hash, states=sorted(config['states']),
         fields=sorted(config['selected']))).encode()).hexdigest()
 
 
@@ -274,7 +272,7 @@ def flow_options(doctype, txt, searchfield, start, page_len, filters):
             limit_start=scanned, limit_page_length=batch_size)
         for row in rows:
             flow = frappe.get_doc('Bot Flow', row.name)
-            if flow.has_permission('read') and flow.lifecycle_status == 'Enabled':
+            if flow.has_permission('read') and flow.status == 'Enabled' and is_current(flow):
                 matches.append((row.name, row.workflow_name))
                 if len(matches) >= offset + size:
                     break
@@ -369,10 +367,7 @@ def diagnose_consumer(settings, consumer, *, defer_errors=False):
             raise ConsumerIssue(_('The selected Bot Flow is disabled.'), 'flow', 'unavailable')
         state = 'technical_required'
         action = _('Synchronize the Process owning application if needed, then review and validate the Bot Flow.')
-        tested = flow.test_state()
-        if flow.flags.process_verification_error:
-            raise RuntimeError('Process evidence verification failed')
-        if tested != 'Passed':
+        if not is_current(flow):
             raise ConsumerIssue(_('The Bot Flow has no current technical approval for its Process revision and dependencies.'), 'flow', 'technical_required')
         if not configuration_changed(settings, consumer):
             result['state'] = 'operational'

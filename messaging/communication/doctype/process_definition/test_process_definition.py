@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import frappe
 
-from messaging.registrations.processes import BotProcess, BotRequest, BotResponse, NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse, ProcessReference, _freeze
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
+from messaging.registry.processes import BotProcess, BotRequest, BotResponse, NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse, ProcessReference, _freeze
 from messaging.registry.processes import register_processes
 from messaging.communication.doctype.process_definition import execution as process, validation as testing
 from messaging.communication.doctype.process_definition.execution import _ProcessContext
@@ -216,39 +217,18 @@ class ProcessFixtures:
         frappe.set_user('Administrator')
         frappe.session.sid = 'registry-test-' + frappe.generate_hash(length=16)
         frappe.db.savepoint('registry_test')
-        self.keys = set()
-        original = testing._approval_key
-        def track(identity):
-            key = original(identity)
-            self.keys.add(key)
-            return key
-        self.tracker = patch.object(testing, '_approval_key', side_effect=track)
-        self.tracker.start()
-        original_invalid = testing._invalidation_key
-        def track_invalid(doc):
-            key = original_invalid(doc)
-            self.keys.add(key)
-            return key
-        self.invalid_tracker = patch.object(testing, '_invalidation_key', side_effect=track_invalid)
-        self.invalid_tracker.start()
         self.network = patch('requests.sessions.Session.request', side_effect=AssertionError('External network forbidden'))
         self.network_mock = self.network.start()
         self.prefix = 'technical_' + frappe.generate_hash(length=8)
         self.definitions = []
-        from messaging.chatbot.doctype.bot_flow.bot_flow import _lifecycle_write
-        with _lifecycle_write():
-            for name in frappe.get_all('Bot Flow', filters={'status': 'Enabled'}, pluck='name'):
-                frappe.db.set_value('Bot Flow', name, 'status', 'Disabled', update_modified=False)
+        for name in frappe.get_all('Bot Flow', filters={'status': 'Enabled'}, pluck='name'):
+            frappe.db.set_value('Bot Flow', name, 'status', 'Disabled', update_modified=False)
         settings = configure_test_settings()
 
     def tearDown(self):
         frappe.set_user('Administrator')
         frappe.db.rollback(save_point='registry_test')
-        self.tracker.stop()
-        self.invalid_tracker.stop()
         self.network.stop()
-        if self.keys:
-            frappe.cache.delete(*self.keys)
         frappe.local.session = self.original_session
         frappe.clear_last_message()
         frappe.local.notification_rules_changed = True
@@ -266,7 +246,7 @@ class ProcessFixtures:
         identifier = self.register(function)
         doc = frappe.new_doc('Bot Flow')
         doc.update(dict(workflow_code=self.prefix + '_' + frappe.generate_hash(length=5), workflow_name='Technical Flow',
-            semantic_description='Isolated runtime verification', priority=0, status='Disabled',
+            semantic_description='Isolated runtime verification', priority=0, status='Untested',
             process_definition=identifier,
             outputs=[dict(status_code='not_found' if function == 'negative_flow' else 'success', output_mode='Message')], **values))
         from messaging.chatbot.doctype.bot_flow.contract import synchronize
@@ -277,17 +257,20 @@ class ProcessFixtures:
         return doc
 
     def approve(self, doc, values=None):
-        if doc.doctype == 'Bot Flow':
-            from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
-            doc.save()
-            if testing.test_state(doc) == 'Passed':
-                return dict(status='Passed', execution_log=doc.process_test_log)
-            result = validate_process(doc.as_dict())
+        from messaging.communication.doctype.process_definition import approval
+        from messaging.chatbot.doctype.bot_flow import bot_flow
+        from messaging.communication.doctype.notification_rule import notification_rule
+
+        owner = bot_flow if doc.doctype == 'Bot Flow' else notification_rule
+        doc.save()
+        if approval.is_current(doc):
+            result = dict(status='Passed', execution_log=doc.process_test_log)
+        else:
+            result = owner.validate_process(doc.as_dict())
             doc.reload()
-            return result
-        result = testing.test_method(doc.as_dict())
-        if result['status'] == 'Passed':
-            doc.insert() if doc.is_new() else doc.save()
+        if result['status'] == 'Passed' and doc.status == 'Disabled':
+            owner.set_active(doc.as_dict(), 1)
+            doc.reload()
         return result
 
     def activate(self, doc, active=True):
@@ -302,14 +285,15 @@ class ProcessFixtures:
         sync_communication_providers()
         set_provider_enabled('EMULR', True)
         if not frappe.db.exists('Communication Channel', 'emulator'):
-            frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR',
-                channel_name='Technical emulator channel', enabled=1)).insert()
+            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR',
+                channel_name='Technical emulator channel')).insert()
+            set_channel_status(channel.name, 'Enabled')
         source = frappe.get_doc(dict(doctype='ToDo', description='Controlled framework document', status='Open')).insert()
         contact = frappe.get_doc(dict(doctype='Emulator Contact', display_name='Technical recipient')).insert()
         account = frappe.get_doc(dict(doctype='Communication Channel Account', channel='emulator',
-            account_id=self.prefix, account_name='Technical test account', enabled=0)).insert()
+            account_id=self.prefix, account_name='Technical test account', enabled=1)).insert()
         rule = frappe.new_doc('Notification Rule')
-        rule.update(dict(rule_name='Technical rule ' + self.prefix, enabled=0,
+        rule.update(dict(rule_name='Technical rule ' + self.prefix, notification_delay_minutes=1,
             process_definition=self.register(function, 'notification'),
             source_application='frappe', source_doctype='ToDo', account=account.name, content_type='Text',
             events=conditions or [dict(document_event='on_update',field_name='status',value='"Open"')],
@@ -431,7 +415,6 @@ class TestProcessAvailability(ProcessFixtures, unittest.TestCase):
         state = dict(queue=[], values={})
         sessions.enqueue(state, [flow.name], get_bot_settings())
         self.assertEqual(len(state['queue']), 1)
-        self.keys.add(testing._invalidation_key(flow))
         with patch('messaging.security.permissions.installed_applications', return_value=['frappe']):
             self.assertNotIn(flow.name, catalog())
             self.assertNotIn(flow.name, {row['workflow_code'] for row in get_menu_flows()})
@@ -576,8 +559,8 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):context._bind_handler(typed_business)
         self.assertEqual(run_handler(definition, execution_context(definition.process_id,'bot_flow','es',False,_freeze(values)),{}),response)
 
-    def test_real_execution_rejects_unknown_status_missing_extra_and_wrong_typed_fields(self):
-        cases = [BotResponse('unknown'), BotResponse('success'), BotResponse('success',{'value':1}),
+    def test_real_execution_rejects_unknown_status_extra_and_wrong_typed_fields(self):
+        cases = [BotResponse('unknown'), BotResponse('success',{'value':1}),
             BotResponse('success',{'value':'ok','private':'other'}), {'status':'success'}]
         for value in cases:
             def declaration(*, params, outcomes):
@@ -1001,7 +984,7 @@ class TestUnifiedProcessAPI(ProcessFixtures, unittest.TestCase):
             execution=dict(session=session.name,turn=turn.name))
         self.assertEqual(context._request.message.name,incoming.name)
         self.assertEqual(context._request.contact.name,contact.name)
-        from messaging.registrations.processes import ProcessContactReference
+        from messaging.registry.processes import ProcessContactReference
         with self.assertRaises(frappe.PermissionError):ProcessContactReference('Chat Contact',contact.name).profile_value('synthetic_key')
         frappe.set_user('Guest')
         with self.assertRaises(frappe.PermissionError):context._request.contact.get_document()
@@ -1315,7 +1298,7 @@ class TestUnifiedOutcomes(unittest.TestCase):
         return context
 
     def test_default_false_empty_fields_and_declared_inputs_are_independent(self):
-        from messaging.registrations.processes import ProcessOutcomes
+        from messaging.registry.processes import ProcessOutcomes
         self.assertFalse(hasattr(ProcessOutcomes, 'register_captured'))
         for kind in ('bot_flow','notification'):
             context=self.context(kind=kind,values={'declared':'input'})
@@ -1342,16 +1325,45 @@ class TestUnifiedOutcomes(unittest.TestCase):
             self.assertEqual(result['amount'],'2.50');self.assertIs(result['accepted'],False)
             self.assertIsNone(result['optional'])
 
-    def test_no_value_copy_and_missing_or_extra_data_rejected(self):
+    def test_no_value_copy_and_extra_data_rejected(self):
         configured=[dict(name='additional',type='string',required=True,multiple=False)]
-        for data in ({},{'additional':'result','extra':'not allowed'},{'declared':'input','additional':'result'}):
+        for data in ({'additional':'result','extra':'not allowed'},{'declared':'input','additional':'result'}):
             context=self.context(include_configurable=True,configured=configured,values={'declared':'input','additional':'input'},data=data)
             with self.subTest(data=data),self.assertRaises(frappe.ValidationError):context.response()
         context=self.context(include_configurable=True,configured=configured,values={'additional':'input'},data={'additional':'result'})
         self.assertEqual(context.response()['data'],{'additional':'result'})
-        # Explicit nullable fields retain their existing exact-key requirement.
-        context=self.context(fields={'identifier':'nullable_string'},include_configurable=True)
-        with self.assertRaises(frappe.ValidationError):context.response()
+        context=self.context(include_configurable=True,configured=configured,values={'additional':'input'})
+        self.assertEqual(context.response()['data'], {})
+
+    def test_v1_structure_and_typed_functional_results(self):
+        from messaging.registry.processes import (
+            ProcessSchemaValidationError, normalize_result, validate_process_schema_v1,
+        )
+        empty = dict(version=1, status='done', recipient='', data={}, message='')
+        self.assertEqual(validate_process_schema_v1(empty), empty)
+        for key in empty:
+            with self.subTest(missing=key), self.assertRaises(ProcessSchemaValidationError):
+                validate_process_schema_v1({field: value for field, value in empty.items() if field != key})
+        for bad in (dict(version=2), dict(version=True), dict(version='1'), dict(status=''),
+            dict(recipient=None), dict(data=[]), dict(data={'key': float('inf')}), dict(message=1),
+            dict(extra=True)):
+            with self.subTest(bad=bad), self.assertRaises(ProcessSchemaValidationError):
+                validate_process_schema_v1(empty | bad)
+
+        outcomes = {'done': {'fields': {'detail': 'string', 'count': 'integer'}}}
+        for kind, response_type in (('bot_flow', BotResponse), ('notification', NotifyResponse)):
+            def normalize(value):
+                return normalize_result(value, outcomes=outcomes, definitions=(), process_type=kind)
+
+            self.assertEqual(normalize(response_type('done')), empty)
+            self.assertEqual(normalize(response_type('done', data={'detail': ''}))['data'], {'detail': ''})
+            for status, data in (('', {}), ('other', {}), ('done', {'count': True}), ('done', {'extra': ''})):
+                with self.subTest(kind=kind, status=status, data=data), self.assertRaises(ProcessSchemaValidationError):
+                    normalize(response_type(status, data=data))
+        omitted = NotifyNoResponse('not_eligible')
+        self.assertIs(normalize(omitted), omitted)
+        with self.assertRaises(frappe.ValidationError):
+            normalize_result(omitted, outcomes=outcomes, definitions=(), process_type='bot_flow')
 
     def test_flag_type_capability_collisions_and_scalar_schema(self):
         for flag in (0,1,None,'true',[],{}):
@@ -1492,7 +1504,7 @@ def dialogue_handler(*, params, outcomes):
 
 
 def dialogue_result(request: BotRequest) -> BotResponse:
-    from messaging.communication.doctype.process_definition.validation import validate_process_schema_v1
+    from messaging.registry.processes import validate_process_schema_v1
     from messaging.communication.doctype.process_definition.process_definition import _effect
     fixture = _dialogue_contracts['messaging.' + _effect.get()['source_name'] + '_process']
     method = globals()[fixture['method']]
@@ -1715,7 +1727,7 @@ class TestPersistedProcessCatalogue(ProcessFixtures, unittest.TestCase):
         self.assertEqual(discovery.call_count, 1)
         self.assertEqual(frappe.get_doc('Process Definition', identifier).as_dict(), original)
         changed_code = json.loads(definition.registered_snapshot)
-        next(iter(changed_code['sources'].values()))['digest'] = '0' * 64
+        changed_code['sources'][changed_code['implementation_sources'][-1]]['digest'] = '0' * 64
         revisions = registry.registration_revisions(definition, changed_code)
         self.assertEqual(revisions['contract_revision'],definition.contract_revision)
         self.assertNotEqual(revisions['capability_revision'],definition.capability_revision)
@@ -1724,54 +1736,92 @@ class TestPersistedProcessCatalogue(ProcessFixtures, unittest.TestCase):
             item['path'] = '/another/deployment/path.py'
         self.assertEqual(registry.registration_revisions(definition, changed_paths)['capability_revision'], definition.capability_revision)
 
-    def test_open_projection_and_status_never_discover_or_inspect_process(self):
+    def test_open_save_and_idempotent_registry_preserve_approvals(self):
+        from frappe.desk.form.load import getdoc
+        from messaging.communication.doctype.process_definition import approval, validation
         from messaging.registry.processes import discovery as registry
-        from messaging.chatbot.doctype.bot_flow.contract import discover as flow_select
-        from messaging.communication.doctype.notification_rule.contract import discover as rule_select
+
         flow = self.flow('discovery_only_flow')
         self.assertEqual(self.approve(flow)['status'], 'Passed')
         rule, source, template = self.configured_rule()
         self.assertEqual(self.approve(rule)['status'], 'Passed')
         with patch.object(registry, '_discover_contract', side_effect=AssertionError('Discovery during read')), \
-            patch.object(registry, 'function_reference', side_effect=AssertionError('Process source inspection during read')), \
-            patch.object(registry, 'inspect_process', side_effect=AssertionError('Inspection during read')), \
-            patch.object(testing, 'runtime_revision', side_effect=AssertionError('Source hashing during read')), \
-            patch.object(registry.subprocess, 'run', side_effect=AssertionError('Interpreter during read')):
+            patch.object(validation, 'run_test', side_effect=AssertionError('Test on open or save')):
             for doc in (flow, rule):
-                doc.onload()
-                self.assertEqual(doc.test_state(), 'Passed')
-            self.assertEqual(flow_select(flow.as_dict())['process_method'], flow.process_method)
-            self.assertEqual(rule_select(rule.as_dict())['process_method'], rule.process_method)
-            template.onload()
-            self.assertNotIn('notification_rule_status', template.get_onload() or {})
+                frappe.response.docs = []
+                getdoc(doc.doctype, doc.name)
+                shown = next(item for item in frappe.response.docs if item.doctype == doc.doctype)
+                self.assertEqual(shown.status, 'Enabled')
+            original = (rule.approval_hash, rule.process_test_log, rule.status)
+            rule.notification_delay_minutes = 7
+            rule.rule_name = 'Updated administrative label'
+            rule.save()
+            self.assertEqual((rule.approval_hash, rule.process_test_log, rule.status), original)
+            self.assertTrue(approval.is_current(rule))
+        register_processes(app='messaging', processes=self.definitions)
+        rule.reload()
+        self.assertEqual((rule.approval_hash, rule.process_test_log, rule.status), original)
 
-    def test_both_approvals_expire_atomically_when_registered_code_changes(self):
+    def test_revision_change_is_selective_transactional_and_idempotent(self):
         from copy import deepcopy
+        from messaging.chatbot.doctype.bot_settings.interpretation import catalog
+        from messaging.communication.doctype.process_definition import approval, validation
+        from messaging.communication.doctype.notification_rule.notification_rule import set_active
         from messaging.registry.processes import discovery as registry
-        flow = self.flow('discovery_only_flow'); self.approve(flow)
-        rule, source, template = self.configured_rule(); self.approve(rule)
-        snapshots = {d.id: registry._uncached_capability_revision(frappe.get_doc('Process Definition', d.id)) for d in self.definitions}
+
+        flow = self.flow('discovery_only_flow')
+        self.assertEqual(self.approve(flow)['status'], 'Passed')
+        rule, source, template = self.configured_rule()
+        self.assertEqual(self.approve(rule)['status'], 'Passed')
+        set_active(rule.as_dict(), 0)
+        rule.reload()
+        other = self.flow('alternate_flow')
+        self.assertEqual(self.approve(other)['status'], 'Passed')
+        self.assertIn(flow.name, catalog())
+        self.assertIn(other.name, catalog())
+        snapshot = {d.id: registry._uncached_capability_revision(frappe.get_doc('Process Definition', d.id))
+            for d in self.definitions}
+        targets = (flow.process_definition, rule.process_definition)
+        original = {doc.name: (doc.status, doc.approval_hash, doc.process_test_log) for doc in (flow, rule, other)}
+
         def changed(definition):
-            result = deepcopy(snapshots[definition.process_id])
-            result['policy'] = 'new registered policy'
+            result = deepcopy(snapshot[definition.process_id])
+            if definition.process_id in targets:
+                result['sources'][result['implementation_sources'][-1]]['digest'] = '0' * 64
             return result
+
         with patch.object(registry, '_uncached_capability_revision', side_effect=changed), \
-            patch.object(testing, 'test_method', side_effect=AssertionError('Synchronization must not run testers')):
+            patch.object(validation, 'run_test', side_effect=AssertionError('Testing during registration')):
+            frappe.db.savepoint('synthetic_revision')
             register_processes(app='messaging', processes=self.definitions)
+            for doc in (flow, rule):
+                doc.reload()
+                self.assertEqual(doc.status, 'Unavailable')
+                self.assertFalse(approval.is_current(doc))
+                self.assertEqual((doc.approval_hash, doc.process_test_log), original[doc.name][1:])
+                self.assertEqual(json.loads(doc.approval_invalidation)[0]['reason'], 'process_revision_changed')
+            self.assertNotIn(flow.name, catalog())
+            self.assertIn(other.name, catalog())
+            register_processes(app='messaging', processes=self.definitions)
+            rule.reload()
+            self.assertEqual(len(json.loads(rule.approval_invalidation)), 1)
+            rule.notification_delay_minutes = 5
+            rule.save()
+            self.assertEqual(rule.status, 'Unavailable')
+            other.reload()
+            self.assertEqual((other.status, other.approval_hash, other.process_test_log), original[other.name])
+            self.assertEqual(rule.outputs[0].template_reference, template.name)
+            frappe.db.rollback(save_point='synthetic_revision')
         for doc in (flow, rule):
             doc.reload()
-            self.assertEqual(doc.test_state(), 'Untested')
-            with self.assertRaises(frappe.ValidationError): doc.require_approved()
-        # Administrative choices remain persisted; effective authorization is withdrawn.
-        self.assertEqual(flow.status, 'Enabled')
-        self.assertEqual(rule.outputs[0].template_reference, template.name)
-        self.assertTrue(rule.outputs[0].send)
+            self.assertEqual((doc.status, doc.approval_hash, doc.process_test_log), original[doc.name])
+            self.assertTrue(approval.is_current(doc))
 
     def test_unsynchronized_code_is_blocked_without_rediscovery(self):
         from messaging.registry.processes import discovery as registry
         flow = self.flow('discovery_only_flow'); self.approve(flow)
         with patch.object(registry, '_discover_contract', side_effect=AssertionError('Unexpected discovery')), \
-            patch.object(testing, 'runtime_revision', return_value='unregistered-runtime'):
+            patch('messaging.communication.doctype.process_definition.revisions.runtime_revision', return_value='unregistered-runtime'):
             result = self.execute(flow)
         self.assertFalse(result['functional'])
         self.assertEqual(frappe.get_doc('Process Execution Log',result['execution_log']).execution_outcome,'Internal Execution Error')

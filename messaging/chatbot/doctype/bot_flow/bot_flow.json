@@ -28,10 +28,12 @@
   "process_flow_tab",
   "section_break_process",
   "process_definition",
-  "process_test_status",
   "process_test_checked_by",
   "process_schema_version",
-  "process_test_fingerprint",
+  "approval_hash",
+  "approved_process_revision",
+  "approved_contract_hash",
+  "approval_invalidation",
   "column_break_fckh",
   "process_method",
   "process_invocation_mode",
@@ -94,14 +96,15 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "Disabled",
+   "default": "Untested",
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
    "no_copy": 1,
    "options": "Untested\nDisabled\nEnabled\nUnavailable",
    "read_only": 1,
-   "reqd": 1
+   "reqd": 1,
+   "in_list_view": 1
   },
   {
    "default": "0",
@@ -204,16 +207,6 @@
    "unique": 1
   },
   {
-   "default": "Untested",
-   "fieldname": "process_test_status",
-   "fieldtype": "Select",
-   "hidden": 1,
-   "label": "Process Test Status",
-   "no_copy": 1,
-   "options": "Untested\nPassed\nFailed",
-   "read_only": 1
-  },
-  {
    "fieldname": "process_test_checked_by",
    "fieldtype": "Link",
    "hidden": 1,
@@ -232,10 +225,34 @@
    "reqd": 1
   },
   {
-   "fieldname": "process_test_fingerprint",
+   "fieldname": "approval_hash",
    "fieldtype": "Data",
    "hidden": 1,
-   "label": "Test Configuration Fingerprint",
+   "label": "Approval Hash",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_process_revision",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Approved Process Revision",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_contract_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Approved Contract Hash",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "approval_invalidation",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Approval Invalidation",
    "no_copy": 1,
    "read_only": 1
   },

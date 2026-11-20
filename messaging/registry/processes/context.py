@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 import inspect
 import frappe
 from frappe import _
-from messaging.registrations.processes import BotParams, NotifyParams, ProcessOutcomes, validate_definition_signature, _resolve_params, normalize_result
+from messaging.registry.processes import BotParams, NotifyParams, ProcessOutcomes, validate_definition_signature, _resolve_params, normalize_result
 
 
 @dataclass(frozen=True, slots=True)

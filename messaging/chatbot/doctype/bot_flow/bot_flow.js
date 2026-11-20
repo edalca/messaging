@@ -1,12 +1,7 @@
 function invalidate_process_contract(frm) {
     // Invalidate the draft synchronously, before discovery can yield to another selection.
-    frm.flow_lifecycle_request = Symbol('definition_changed');
     for (const table of ['parameters', 'outputs', 'output_translations']) frm.clear_table(table);
-    Object.assign(frm.doc, {process_method: '', process_contract: '', process_contract_fingerprint: '',
-        process_test_status: 'Untested', process_test_fingerprint: '', process_test_evidence: '',
-        process_test_checked_at: null, process_test_checked_by: null, process_test_log: null});
-    frm.flow_lifecycle_button?.prop('disabled', true);
-    show_flow_lifecycle_state(frm, 'Untested');
+    Object.assign(frm.doc, {process_method: '', process_contract: '', process_contract_fingerprint: ''});
     frm.dirty();
     frm.refresh_fields(['parameters', 'outputs', 'process_method', 'process_contract']);
     sync_flow_parameter_state(frm);
@@ -136,7 +131,8 @@ frappe.ui.form.on("Bot Flow", {
 			frm.refresh_field(table);
 		}
 		render_flow_translation_cards(frm);
-		refresh_flow_lifecycle(frm);
+        return frappe.require('/assets/messaging/js/process_test.js').then(() =>
+            messaging.process_approval.refresh(frm, 'messaging.chatbot.doctype.bot_flow.bot_flow.'));
 	},
     show_in_menu: render_flow_translation_cards,
 	priority(frm) {
@@ -279,149 +275,6 @@ frappe.ui.form.on('Flow Output', {
     output_mode: (frm, cdt, cdn) => render_translation_editor(frm, cdt, cdn, 'output')
 });
 
-
-function flow_lifecycle_error(error) {
-    const response = error?.responseJSON || error;
-    const administrative = ['ValidationError', 'PermissionError', 'TimestampMismatchError',
-        'MandatoryError', 'LinkValidationError'].includes(response?.exc_type);
-    if (administrative) {
-        try {
-            const messages = JSON.parse(response._server_messages || '[]');
-            if (messages.length) return JSON.parse(messages[messages.length - 1]).message;
-        } catch (_) { /* Fall back to the administrative exception text. */ }
-        if (typeof response.exception === 'string') return response.exception.replace(/^[^:]+:\s*/, '');
-    }
-    return __('The operation could not be completed. Reload the Flow to check its current state, then try again.');
-}
-
-function show_flow_lifecycle_error(error) {
-    frappe.msgprint({title: __('Flow operation failed'), indicator: 'red',
-        message: frappe.utils.escape_html(flow_lifecycle_error(error))});
-}
-
-async function flow_lifecycle_call(method, args, load_document = false) {
-    // Frappe's generic 500 handler opens raw diagnostic details. Handle this
-    // request locally so technical failures always receive a safe message.
-    const response = await $.ajax({url: '/api/method/' + method, type: 'POST',
-        data: Object.fromEntries(Object.entries(args).map(([key, value]) =>
-            [key, typeof value === 'object' ? JSON.stringify(value) : value])),
-        dataType: 'json', headers: {'X-Frappe-CSRF-Token': frappe.csrf_token}, timeout: 30000});
-    if (!response || response.exc || response.exception ||
-        (load_document ? !Array.isArray(response.docs) : !response.message)) throw response;
-    return load_document ? response : response.message;
-}
-
-function show_flow_lifecycle_state(frm, state) {
-    if (!['Untested', 'Disabled', 'Enabled', 'Unavailable'].includes(state)) throw new Error('Invalid Flow state');
-    frm.doc.status = state;
-    frm.refresh_field('status');
-    frm.page.set_indicator(__(state, null, 'Bot Flow'),
-        state === 'Enabled' ? 'green' : state === 'Disabled' ? 'gray' : 'orange');
-}
-
-async function refresh_flow_lifecycle(frm) {
-    const owner = 'messaging.chatbot.doctype.bot_flow.bot_flow.';
-    const request = Symbol('flow_lifecycle');
-    frm.flow_lifecycle_request = request;
-    frm.flow_lifecycle_button?.remove();
-    if (frm.flow_lifecycle_label) {
-        frm.page.menu.find(`[data-label="${encodeURIComponent(frm.flow_lifecycle_label)}"]`).closest('li').remove();
-    }
-    frm.flow_lifecycle_button = null;
-    frm.page.set_primary_action(__('Save'), () => frm.save(), 'save');
-    frm.page.btn_primary?.prop('disabled', !frm.is_dirty() || frm.flow_lifecycle_operation?.doc === frm.doc);
-    if (frm.is_new() || !frappe.user.has_role('System Manager')) return;
-    const name = frm.doc.name;
-    const doc = frm.doc;
-    const route = frappe.get_route_str();
-    const current = () => frm.doc === doc && frappe.get_route_str() === route;
-    let message;
-    try {
-        message = doc.__onload?.flow_lifecycle || await flow_lifecycle_call(owner + 'state', {name});
-        // Reuse only this load's response. A later refresh must verify again.
-        // The current document load already includes its effective approval state.
-        if (!current() || frm.flow_lifecycle_request !== request) return;
-        show_flow_lifecycle_state(frm, message.lifecycle_status);
-        if (message.verification_error) frm.set_intro(message.verification_error, 'orange');
-    } catch (error) {
-        if (current() && frm.flow_lifecycle_request === request) show_flow_lifecycle_error(error);
-        return;
-    }
-    if (frm.doc.name !== name || frm.flow_lifecycle_request !== request) return;
-    const state = message.lifecycle_status;
-    if (state === 'Unavailable') return;
-    const label = state === 'Untested' ? __('Validate') : state === 'Disabled' ? __('Activate') : __('Deactivate');
-    const act = async () => {
-        if (!current() || frm.flow_lifecycle_operation?.doc === doc) return;
-        if (frm.is_new() || frm.is_dirty()) {
-            frappe.msgprint(__('Save pending changes before validating or changing activation.'));
-            return;
-        }
-        const args = {candidate: frm.doc};
-        if (state !== 'Untested') args.active = state === 'Disabled' ? 1 : 0;
-        const operation = {name, doc};
-        frm.flow_lifecycle_operation = operation;
-        const modified = frm.doc.modified;
-        frm.flow_lifecycle_button?.prop('disabled', true).attr('aria-busy', 'true')
-            .text(state === 'Untested' ? __('Validating...') : __('Updating state...'));
-        frm.page.btn_primary?.prop('disabled', true);
-        frm.set_intro(state === 'Untested' ? __('Validating...') : __('Updating state...'), 'blue');
-        try {
-            const result = await flow_lifecycle_call(
-                owner + (state === 'Untested' ? 'validate_process' : 'set_active'), args);
-            if (!current()) return;
-            if (frm.is_dirty() || frm.doc.modified !== modified) {
-                frappe.msgprint(__('The document changed during the operation. Reload it to check its current state.'));
-                return;
-            }
-            if (state === 'Untested' && !['Passed', 'Failed'].includes(result.status)) throw new Error('Invalid validation response');
-            if (!['Untested', 'Disabled', 'Enabled', 'Unavailable'].includes(result.lifecycle_status)) throw new Error('Invalid Flow state');
-            if (result.status === 'Passed' && result.lifecycle_status !== 'Enabled') throw new Error('Invalid validation state');
-            if (result.status === 'Failed') {
-                frappe.msgprint({title: __('Flow validation failed.'), indicator: 'red',
-                    message: frappe.utils.escape_html(result.execution_log
-                        ? __('The Process could not be validated. Review Process Execution Log {0} for the technical diagnosis.', [result.execution_log])
-                        : result.message || __('Flow validation failed.'))});
-            }
-            const saved = await flow_lifecycle_call('frappe.desk.form.load.getdoc', {doctype: frm.doctype, name}, true);
-            if (!current()) return;
-            if (frm.is_dirty() || frm.doc.modified !== modified) {
-                frappe.msgprint(__('The document changed during the operation. Reload it to check its current state.'));
-                return;
-            }
-            if (!saved.docs.some(item => item.doctype === frm.doctype && item.name === name)) throw new Error('Invalid Flow document');
-            frappe.model.remove_from_locals(frm.doctype, name);
-            frappe.model.sync(saved);
-            await frm.refresh(name);
-            if (frappe.get_route_str() !== route || frm.doc.name !== name) return;
-            if (state === 'Untested' && result.status === 'Passed' && frm.doc.status === 'Enabled') {
-                frappe.msgprint({title: __('Flow validated'), indicator: 'green',
-                    message: __('The Flow was validated and enabled. Business logic was not executed.')});
-            } else if (state === 'Untested' && result.status === 'Passed') {
-                frappe.msgprint(__('The Flow is no longer validated. Review its configuration and validate it again.'));
-            }
-        } catch (error) {
-            if (frappe.get_route_str() === route && frm.doc.name === name) show_flow_lifecycle_error(error);
-        } finally {
-            if (frm.flow_lifecycle_operation === operation) {
-                frm.flow_lifecycle_operation = null;
-                if (frappe.get_route_str() === route && frm.doc.name === name) {
-                    frm.set_intro(frm.is_dirty() ? __('Save pending changes before validating or changing activation.') : '', 'orange');
-                    if (frm.doc === doc) await refresh_flow_lifecycle(frm);
-                }
-            }
-        }
-    };
-    frm.flow_lifecycle_label = label;
-    frm.flow_lifecycle_button = frm.page.add_button(label, act, {btn_class: 'btn-default'});
-    const dirty = () => {
-        frm.flow_lifecycle_button?.prop('disabled', frm.is_dirty() || frm.flow_lifecycle_operation?.doc === frm.doc);
-        if (frm.is_dirty()) frm.set_intro(__('Save pending changes before validating or changing activation.'), 'orange');
-        else frm.set_intro(message.verification_error || '', 'orange');
-    };
-    frm.$wrapper.off('dirty.flow_lifecycle').on('dirty.flow_lifecycle', dirty);
-    dirty();
-}
 
 async function render_flow_translation_cards(frm) {
     const doc = frm.doc;

@@ -11,8 +11,8 @@ from messaging.chatbot.doctype.bot_flow.bot_flow import (
 from messaging.common.locking import shared_document
 from messaging.communication.doctype.process_definition.execution import execute_process
 from messaging.communication.doctype.process_execution_log.process_execution_log import require_execution_receipt
-from messaging.registrations.processes import validate_captured_process_argument
-from messaging.communication.doctype.process_definition.validation import fingerprint
+from messaging.registry.processes import validate_captured_process_argument
+from messaging.communication.doctype.process_definition.approval import require_approved
 
 
 def invoke(flow, values, *, session, turn, execution_id):
@@ -57,6 +57,7 @@ def require_execution_result(flow, result, *, session, turn, execution_id):
 		raise frappe.ValidationError(_("A verified functional Process result is required."))
 	log = require_execution_receipt(result['execution_log'], source_type='Bot Flow', source_name=flow.name,
 		session=session, turn=turn, execution_id=execution_id, status=result.get('status'))
-	if (log.process_definition, log.configuration_fingerprint) != (flow.process_definition, fingerprint(flow)):
+	require_approved(flow)
+	if (log.process_definition, log.configuration_fingerprint) != (flow.process_definition, flow.approval_hash):
 		raise frappe.ValidationError(_("The Process receipt does not match the current Flow execution."))
 	return log

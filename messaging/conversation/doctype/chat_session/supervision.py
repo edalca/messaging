@@ -71,7 +71,7 @@ def _public_id_map(accounts_map):
 def _load_channels_and_accounts(channel=None):
 	channels = frappe.get_all(
 		"Communication Channel",
-		filters={"enabled": 1},
+		filters={"status": "Enabled"},
 		fields=["name", "channel_name", "provider"],
 		order_by="channel_name asc",
 	)
@@ -248,7 +248,7 @@ def _build_workload_bundle(*, channel="", account="", agent="", availability="")
 		for c in frappe.get_all(
 			"Communication Channel",
 			filters={"name": ["in", channel_ids]},
-			fields=["name", "channel_name", "provider", "enabled"],
+			fields=["name", "channel_name", "provider", "status"],
 		)
 	} if channel_ids else {}
 
@@ -278,7 +278,7 @@ def _build_workload_bundle(*, channel="", account="", agent="", availability="")
 
 		ch_doc = channels_map.get(ch)
 		channel_exists = bool(ch_doc)
-		channel_enabled = bool(ch_doc and ch_doc.get("enabled"))
+		channel_enabled = bool(ch_doc and ch_doc.get("status") == "Enabled")
 
 		acc_doc = accounts_map.get(acc)
 		account_exists = bool(acc_doc and acc_doc.get("channel") == ch)
@@ -1046,7 +1046,7 @@ def detail(session_name, before=None, limit=60):
 				"User", session_doc.assigned_agent, ["full_name", "enabled"], as_dict=True
 			)
 			ch_doc = frappe.db.get_value(
-				"Communication Channel", session_doc.channel, ["name", "channel_name", "enabled"], as_dict=True
+				"Communication Channel", session_doc.channel, ["name", "channel_name", "status"], as_dict=True
 			)
 			acc_doc = frappe.db.get_value(
 				"Communication Channel Account",
@@ -1064,7 +1064,7 @@ def detail(session_name, before=None, limit=60):
 				user_enabled=bool(user_doc and user_doc.get("enabled")),
 				has_role=has_role,
 				channel_exists=bool(ch_doc),
-				channel_enabled=bool(ch_doc and ch_doc.get("enabled")),
+				channel_enabled=bool(ch_doc and ch_doc.get("status") == "Enabled"),
 				account_exists=bool(acc_doc and acc_doc.get("channel") == session_doc.channel),
 				account_enabled=bool(acc_doc and acc_doc.get("channel") == session_doc.channel and acc_doc.get("enabled")),
 				grant_enabled=False,

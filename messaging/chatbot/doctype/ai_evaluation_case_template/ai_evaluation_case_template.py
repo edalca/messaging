@@ -7,7 +7,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from messaging.registrations.ai_providers import FUNCTIONAL_TYPES
+from messaging.registry.ai_providers import FUNCTIONAL_TYPES
 from .parameters import PARAMETER_FIELDS, parameter_contract
 from messaging.chatbot.doctype.bot_parameter.bot_parameter import (
 	get_handler,

@@ -169,7 +169,7 @@ def dispatch_ingress(provider, account, request):
 	if not isinstance(verified, dict) or set(verified) != {'action', 'payload'} or not isinstance(verified['payload'], dict):
 		frappe.throw(_("Invalid authenticated channel event."), frappe.PermissionError)
 	action, payload = verified['action'], deepcopy(verified['payload'])
-	allowed = {'receive': {'event'}, 'report_result': {'dispatch_name', 'result', 'source_type'},
+	allowed = {'ignore': set(), 'refresh_template_status': {'templates'}, 'receive': {'event'}, 'report_result': {'dispatch_name', 'result', 'source_type'},
 		'report_status': {'dispatch_name', 'status', 'reference', 'source_type'}}
 	if not isinstance(action, str) or action not in allowed or set(payload) != allowed[action]:
 		frappe.throw(_("Invalid authenticated channel event."), frappe.PermissionError)
@@ -181,7 +181,7 @@ def dispatch_ingress(provider, account, request):
 	if action == 'receive':
 		from messaging.conversation.doctype.chat_turn.chat_turn import validate_request
 		validate_request(normalize_event(definition, binding, payload['event']))
-	else:
+	elif action in ('report_result', 'report_status'):
 		if payload['source_type'] not in ('Bot Dispatch', 'Notification Queue'):
 			frappe.throw(_("Invalid outbound source."))
 		if action == 'report_result':
@@ -191,6 +191,11 @@ def dispatch_ingress(provider, account, request):
 			frappe.throw(_("Invalid delivery status."))
 	with _authenticated_adapter(provider, account):
 		resolve_binding(provider, account, incoming=True)
+		if action == 'ignore':
+			return None
+		if action == 'refresh_template_status':
+			from messaging.communication.doctype.communication_template.status import schedule_template_refresh
+			return schedule_template_refresh(definition, current, payload)
 		if action == 'receive':
 			return receive(provider, account, payload['event'])
 		if action == 'report_result':

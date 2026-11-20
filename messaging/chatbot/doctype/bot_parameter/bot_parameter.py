@@ -4,6 +4,7 @@ import hmac
 import json
 import re
 
+from messaging.communication.doctype.process_definition import approval
 from messaging.chatbot.doctype.bot_parameter.parameters import get_handler, get_supported_types
 from messaging.chatbot.doctype.bot_parameter.parameters.engine import (
 	Occurrence,
@@ -405,15 +406,12 @@ def _attach_approval(item: dict) -> None:
 		item["outputs"] = []
 		return
 	flow = frappe.get_doc("Bot Flow", item["name"])
-	item["approval"] = flow.test_state()
+	item["status"] = flow.status
+	item["approval"] = "Passed" if approval.is_current(flow) else "Untested"
 	item["evidence"] = "current" if item["approval"] == "Passed" else "pending"
-	item["outputs"] = []
-	if is_system_manager():
-		try:
-			item["outputs"] = flow.output_states()
-		except Exception:
-			frappe.clear_last_message()
-			item["outputs"] = []
+	item["outputs"] = [
+		dict(status_code=row.status_code, status=item["approval"]) for row in flow.outputs
+	]
 	frappe.clear_document_cache("Bot Flow", item["name"])
 
 
@@ -431,6 +429,9 @@ def _commit_confirmed(doc, consumers: list[dict], token: str) -> dict:
 				_attach_approval(item)
 			return _operation_result(doc.name, applied=False, unchanged=False, consumers=assessed)
 		for item in assessed:
+			if item["doctype"] == "Bot Flow":
+				flow = frappe.get_doc("Bot Flow", item["name"], for_update=True)
+				approval.dependency_changed(flow, "parameter_contract_changed")
 			_attach_approval(item)
 		return _operation_result(doc.name, applied=True, unchanged=False, consumers=assessed)
 	except Exception:

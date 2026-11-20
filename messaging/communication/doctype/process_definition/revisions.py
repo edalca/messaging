@@ -21,8 +21,8 @@ def registration_revisions(definition, snapshot):
     identity = _registration_identity(definition)
     structural = dict(identity, contract=snapshot['declaration']['contract'])
     effective = dict(structural, declaration=snapshot['declaration'],
-        sources={module: source['digest'] for module, source in snapshot['sources'].items()},
-        runtime=snapshot['runtime'], policy=snapshot['policy'])
+        sources={module: snapshot['sources'][module]['digest'] for module in snapshot['implementation_sources']},
+        policy=snapshot['policy'])
     return {name: hashlib.sha256(canonical_json(value).encode()).hexdigest() for name, value in
         (('contract_revision', structural), ('capability_revision', effective))}
 
@@ -36,12 +36,14 @@ def runtime_sources():
 		dict(path=str(root / name), digest=hashlib.sha256((root / name).read_bytes()).hexdigest())
 		for name in (
 				"communication/doctype/process_definition/execution.py",
+				"communication/doctype/process_definition/approval.py",
 				"registry/processes/discovery.py",
                 "registry/processes/context.py",
                 "registry/processes/inspection.py",
 				"communication/doctype/process_definition/validation.py",
 				"communication/doctype/process_definition/process_definition.py",
-				"registrations/processes/contracts.py",
+				"registry/processes/__init__.py",
+				"registry/processes/contracts.py",
                 "registry/processes/operations.py",
                 "communication/doctype/process_definition/revisions.py",
 				"registry/_catalog.py",
@@ -53,6 +55,8 @@ def runtime_sources():
 				"communication/doctype/communication_provider_value/communication_provider_value.py",
 				"communication/doctype/notification_rule/events.py",
 				"communication/doctype/communication_template/communication_template.py",
+				"communication/doctype/communication_template/external.py",
+				"communication/doctype/communication_template/languages.py",
 				"conversation/doctype/chat_turn/chat_turn.py",
 				"conversation/doctype/chat_turn/inbox.py",
 				"common/locking.py",

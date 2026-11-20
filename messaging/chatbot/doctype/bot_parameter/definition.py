@@ -9,7 +9,7 @@ CANONICAL_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 
 def validate_identity(self) -> None:
 	code = self.name or ""
-	from messaging.registrations.processes import validate_captured_process_argument
+	from messaging.registry.processes import validate_captured_process_argument
 	validate_captured_process_argument(code)
 	if not CANONICAL_CODE_PATTERN.fullmatch(code) or keyword.iskeyword(code):
 		frappe.throw(

@@ -1,5 +1,52 @@
-"""Discovery and registration operations for processes."""
-from messaging.registrations import processes as _contracts
+"""Public processes contracts and registration operations."""
+from .contracts import (
+    REGISTRATION_SCHEMA_VERSION,
+    SUPPORTED_REGISTRATION_SCHEMAS,
+    _validate_version,
+    validate_captured_process_argument,
+    _identifier,
+    _input_definitions,
+    _input_value,
+    FIELD_TYPES,
+    _field_value,
+    validate_output_data,
+    validate_definition_signature,
+    validate_handler_signature,
+    configurable_output_fields,
+    project_outcomes,
+    SUPPORTED_PROCESS_SCHEMA_VERSION,
+    REQUIRED_PROCESS_SCHEMA_KEYS,
+    STATUS_CODE_PATTERN,
+    ProcessSchemaValidationError,
+    validate_process_schema_v1,
+    FLOW_ACTIONS,
+    BotProcess,
+    NotifyProcess,
+    BotDefinition,
+    BotHandler,
+    NotifyDefinition,
+    NotifyHandler,
+    BotParams,
+    NotifyParams,
+    BotRequest,
+    NotifyRequest,
+    BotResponse,
+    NotifyResponse,
+    NotifyNoResponse,
+    ProcessReference,
+    ProcessContactReference,
+    ProcessParameterDefinition,
+    ProcessParameterValues,
+    ProcessOutcomes,
+    _resolve_params,
+    normalize_result,
+    _freeze,
+    is_automation,
+    require_automation_process
+)
+
 from .operations import _retire, _synchronize, decimal_rows, is_process_test, register_processes, validate_registration_schema
 from messaging.registry._catalog import register_declaration_type
-register_declaration_type('processes', (_contracts.BotProcess, _contracts.NotifyProcess), validate=validate_registration_schema, synchronize=_synchronize, retire=_retire)
+
+register_declaration_type('processes', (BotProcess, NotifyProcess), validate=validate_registration_schema,
+    synchronize=_synchronize, retire=_retire)

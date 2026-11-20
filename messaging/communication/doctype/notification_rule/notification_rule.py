@@ -1,12 +1,10 @@
 """Document event configuration; executable paths use the shared Process authorization."""
 
-from contextlib import contextmanager, nullcontext
 import json
 import re
 
 import frappe
 from frappe import _
-from frappe.model.document import Document
 from frappe.modules.utils import get_module_app
 from frappe.utils import cint
 
@@ -30,8 +28,8 @@ from messaging.communication.doctype.communication_template.communication_templa
 	provider_template_contract,
 	registered_template_definition,
 	template_identity,
-	template_revision,
 )
+from messaging.communication.doctype.communication_template.external import managed, published_revision, requires_published
 from messaging.communication.doctype.notification_rule.conditions import (
 	EVENTS,
 	canonical_conditions,
@@ -49,15 +47,10 @@ from messaging.communication.doctype.notification_rule.contract import (
 	synchronize,
 	validate_notification_contract,
 	validate_output_templates,
-	require_notifiable_outcomes,
 	validate_parameters,
 )
-from messaging.communication.doctype.process_definition import validation
-from messaging.communication.doctype.process_definition.process_definition import (
-	bind_definition,
-	validate_process_method_path,
-)
-from messaging.registrations.processes import ProcessSchemaValidationError
+from messaging.communication.doctype.process_definition import approval, validation
+from messaging.registry.processes import ProcessSchemaValidationError
 from messaging.security.permissions import require_system_manager
 
 EXCLUDED = frozenset(
@@ -71,21 +64,13 @@ EXCLUDED = frozenset(
 )
 
 
+def is_enabled(rule):
+	return rule.status == "Enabled"
+
+
 def require_manager():
 	require_system_manager()
 	frappe.has_permission("Notification Rule", "write", throw=True)
-
-
-def invalidate_process_approval(definition, method=None):
-	previous = definition.get_doc_before_save()
-	if not previous or (previous.capability_revision, previous.status) == (definition.capability_revision, definition.status):
-		return
-	for name in frappe.get_all('Notification Rule', filters={'process_definition': definition.name}, pluck='name'):
-		rule = frappe.get_doc('Notification Rule', name, for_update=True)
-		validation.clear_approval(rule)
-		frappe.db.set_value('Notification Rule', name,
-			dict(enabled=0, **{key: rule.get(key) for key in validation.RECEIPT_FIELDS}))
-	invalidate_rules()
 
 
 def source_app(doctype):
@@ -95,52 +80,42 @@ def source_app(doctype):
 def content_types(definition):
 	if "validate_notification" not in definition["operations"]:
 		return []
+	if requires_published(definition):
+		return ["Template"] if managed(definition) else []
 	capabilities = set(definition["capabilities"])
-	result = []
-	if (
+	return ["Template"] if (
 		"templates" in capabilities
 		or ("text" in capabilities and "notification_template_required" not in capabilities)
-		or (
-			"provider_templates" in capabilities
-			and {"resolve_provider_template", "prepare_provider_template"} <= set(definition["operations"])
-		)
-	):
-		result.append("Template")
-	return result
+	) else []
 
 
 STRUCTURAL_FIELDS = (
-	"rule_name",
 	"source_application",
 	"source_doctype",
 	"account",
-	"redirect_recipient",
 )
 
 
 def validate_immutable_structure(rule):
-	"""Compare with a locked persisted owner; disabled rules have the same identity."""
+	"""Compare with a locked persisted owner; only non-enabled rules may edit events."""
 	if rule.is_new():
 		return
 	previous = frappe.get_doc("Notification Rule", rule.name, for_update=True)
 
 	def signature(doc):
 		values = {field: doc.get(field) or None for field in STRUCTURAL_FIELDS}
-		values["events"] = sorted(
-			(r.document_event, r.field_name or "", r.value or "") for r in doc.events
-		)
-		values["parameters"] = sorted(
-			(r.parameter_key, r.value or "", r.secret_value or "") for r in doc.parameters
-		)
+		if is_enabled(previous) or is_enabled(rule):
+			values["events"] = sorted(
+				(r.document_event, r.field_name or "", r.value or "") for r in doc.events
+			)
 		return values
 
 	before, after = signature(previous), signature(rule)
-	# An account-less draft can bind its first real account and provider values.
+	# An account-less draft can bind its first real account.
 	# Once bound, the existing immutable operational identity applies.
-	if not previous.account and not previous.enabled and not rule.enabled:
-		for field in ("account", "parameters", "redirect_recipient"):
-			before.pop(field)
-			after.pop(field)
+	if not previous.account and not is_enabled(previous) and not is_enabled(rule):
+		before.pop("account", None)
+		after.pop("account", None)
 	if _preset_write.active():
 		# Authorized documentary synchronization may update registered defaults only.
 		for field in ('rule_name', 'events'):
@@ -155,7 +130,7 @@ def validate_immutable_structure(rule):
 _preset_write = InternalWriteGuard("messaging_notification_rule_provenance")
 
 
-class NotificationRule(Document):
+class NotificationRule(approval.ProcessConsumer):
 	def _protect_application(self):
 		if not _preset_write.active():
 			previous = None if self.is_new() else frappe.get_doc('Notification Rule', self.name)
@@ -172,36 +147,11 @@ class NotificationRule(Document):
 		if self.is_new() and self.application and self.application not in frappe.get_installed_apps():
 			raise frappe.PermissionError(_("Registration owner must be an installed application."))
 
-	@property
-	def lifecycle_status(self):
-		tested = self.test_state(remember_invalid=True)
-		if tested == "Unavailable":
-			return "Unavailable"
-		if tested != "Passed":
-			return "Untested"
-		return "Enabled" if self.enabled else "Disabled"
-
 	def onload(self):
 		self.set_onload("account_bound", bool(self.account))
-		self.set_onload(
-			"rule_lifecycle",
-			dict(
-				lifecycle_status=self.lifecycle_status,
-				verification_error=self.flags.process_verification_error,
-			),
-		)
 
-	def test_state(self, *, remember_invalid=False):
-		return validation.test_state(self, remember_invalid=remember_invalid)
-
-	def require_approved(self):
-		return validation.require_approved(self)
-
-	def runtime_evidence(self, definition, *, administrative_test=False):
-		return validation.runtime_evidence(self, definition, administrative_test=administrative_test)
-
-	def validate_notification_contract(self):
-		return validate_notification_contract(self)
+	def _approval_status_changed(self):
+		invalidate_rules()
 
 	def resolve_parameters(self, source):
 		return resolve_parameters(self, source)
@@ -228,12 +178,11 @@ class NotificationRule(Document):
 		return dict(status=response["status"], output_mode="Template", rendered_message="")
 
 	def _validate_process_candidate(self):
-		from messaging.communication.doctype.process_definition.process_definition import registered_contract
-		require_notifiable_outcomes(registered_contract(bind_definition(self)))
-		validate_rule(self)
+		validate_rule(self, explicit=True)
 		validate_notification_contract(self)
+		self._validate_activation()
 
-	def _consumer_fingerprint(self, *, include_schedule=True):
+	def _consumer_fingerprint(self):
 		config = dict(validation._fields(self, validation.RULE_FIELDS))
 		config["events"] = canonical_conditions(self)
 		config["process_contract"] = self.get("process_contract")
@@ -252,69 +201,40 @@ class NotificationRule(Document):
 			)
 			for r in self.process_parameters
 		]
-		config["outcomes"] = [
-			validation._fields(r, ("status_code", "template_reference", "send"))
-			for r in self.outputs
-		]
-		lock_templates = bool(
-			self.flags.get("_lock_templates")
-			or getattr(frappe.flags, "_lock_notification_rule_templates", False)
-		)
-		templates_map = {}
-		for r in self.outputs:
-			if r.send and r.template_reference:
-				if frappe.db.exists("Communication Template", r.template_reference):
-					base = frappe.get_doc(
-						"Communication Template",
-						r.template_reference,
-						for_update=lock_templates,
-					)
-					templates_map[r.template_reference] = template_revision(base)
-
-				else:
-					templates_map[r.template_reference] = None
-
-		config["templates"] = templates_map
-		config["delivery"] = delivery_contract(self)
-		if include_schedule:
-			config["notification_delay_minutes"] = self.get("notification_delay_minutes")
+		config["outcomes"] = sorted((r.status_code, bool(r.send)) for r in self.outputs)
 		return config
+
+	def _approval_delivery_fingerprint(self):
+		templates = {}
+		for row in self.outputs:
+			if row.send and row.template_reference:
+				base = frappe.get_doc("Communication Template", row.template_reference)
+				templates[row.status_code] = (base.previous_name or base.name, published_revision(base))
+		return dict(
+			templates=templates,
+			binding=delivery_contract(self),
+			redirect_recipient=bool(self.redirect_recipient),
+		)
 
 	def before_validate(self):
 		self._protect_application()
-		enabled = bool(cint(self.enabled))
-		if enabled:
-			lock_document_types("Communication Template", "Notification Rule")
-		with _lock_template_reads() if enabled else nullcontext():
-			validate_rule(self)
-			validation.validate_readiness(self, enabled=enabled)
+		approval.protect(self)
 
 	def validate(self):
-		self._protect_application()
-		enabled = bool(cint(self.enabled))
-		with _lock_template_reads() if enabled else nullcontext():
-			validate_rule(self)
-			validation.validate_readiness(self, enabled=enabled)
+		validate_rule(self)
+		approval.check_save(self)
 
-	def db_set(self, fieldname, value=None, **kwargs):
-		# Use save so readiness and immutable structure are checked on backend actions.
-		if kwargs.get("commit"):
-			frappe.throw(_("Notification Rule updates cannot commit implicitly."))
-		values = fieldname if isinstance(fieldname, dict) else {fieldname: value}
-		if set(values) != {"enabled"}:
-			frappe.throw(_("Save Notification Rule changes through its validated controller."))
-		self.update(values)
-		return self.save()
+	def _validate_activation(self):
+		from messaging.communication.doctype.communication_channel_account.binding import resolve_binding
+		from messaging.communication.doctype.communication_template.status import notification_template_gate
 
-	def db_update(self, *args, **kwargs):
-		validate_immutable_structure(self)
-		previous = frappe.get_doc("Notification Rule", self.name)
-		if cint(self.enabled):
-			with _lock_template_reads():
-				validate_notification_contract(self)
-				if not cint(previous.enabled):
-					validation.require_approved(self)
-		return super().db_update(*args, **kwargs)
+		account = frappe.get_doc("Communication Channel Account", self.account)
+		provider = frappe.db.get_value("Communication Channel", account.channel, "provider")
+		resolve_binding(provider, account.name)
+		notification_destination(self, account)
+		for row in self.outputs:
+			if row.send and notification_template_gate(row.template_reference, account.name):
+				frappe.throw(_("The selected notification template is unavailable."))
 
 	def before_rename(self, *args, **kwargs):
 		frappe.throw(_("Notification rule identity is immutable."))
@@ -341,7 +261,7 @@ def validate_notification_delay(value):
 	return int(value)
 
 
-def validate_rule(rule):
+def validate_rule(rule, *, explicit=False):
 	validate_immutable_structure(rule)
 	rule.notification_delay_minutes = validate_notification_delay(
 		rule.get("notification_delay_minutes")
@@ -360,17 +280,14 @@ def validate_rule(rule):
 			_("The DocType does not belong to this source application or cannot be observed.")
 		)
 	validate_conditions(rule)
-	bind_definition(rule)
-	if rule.process_invocation_mode not in ("Internal Call (frappe.call)", "Whitelisted API"):
-		frappe.throw(_("Unsupported Process invocation mode."))
-	enabled = bool(cint(rule.enabled))
-	if enabled and not rule.outputs:
-		frappe.throw(_("Configure at least one output before enabling or validating this Notification Rule."))
-	contract = synchronize(rule)
-	validate_parameters(rule, contract)
-	validate_output_templates(rule, contract)
+	if explicit or rule.status != "Unavailable" or approval.fields_changed(
+		rule, "process_definition", "account", "events", "process_parameters", "outputs"
+	):
+		contract = synchronize(rule)
+		validate_parameters(rule, contract)
+		validate_output_templates(rule, contract)
 	if not rule.account:
-		if enabled or rule.parameters or rule.redirect_recipient:
+		if rule.parameters or rule.redirect_recipient:
 			frappe.throw(
 				_(
 					"Configure a Communication Channel Account before enabling the rule or provider settings."
@@ -390,6 +307,8 @@ def validate_rule(rule):
 	):
 		frappe.throw(_("This provider does not allow optional recipient redirection."))
 	required = "notification_redirect_required" in definition["capabilities"]
+	if not required and not rule.redirect_recipient and rule.parameters:
+		rule.set("parameters", [])
 	old = rule.get_doc_before_save()
 	if old and old.account != rule.account:
 		old_channel = frappe.db.get_value("Communication Channel Account", old.account, "channel")
@@ -404,16 +323,14 @@ def validate_rule(rule):
 	validate_values(
 		rule,
 		check_required=bool(
-			first_binding
-			or ((required or rule.redirect_recipient) and (enabled or rule.redirect_recipient))
+			(first_binding and required)
+			or rule.redirect_recipient
 		),
 	)
 	for row in rule.outputs:
 		if row.send and "Template" not in content_types(definition):
 			frappe.throw(_("The provider does not support this notification content type."))
-	if enabled:
-		validate_notification_contract(rule)
-	if first_binding or enabled or rule.redirect_recipient or (required and rule.parameters):
+	if (first_binding and required) or rule.redirect_recipient or (required and rule.parameters):
 		notification_destination(rule, account)
 
 
@@ -430,7 +347,7 @@ def rule_index():
 		result = {}
 		for row in frappe.get_all(
 			"Notification Rule",
-			filters={"enabled": 1},
+			filters={"status": "Enabled"},
 			fields=["name", "source_doctype"],
 			order_by="name",
 		):
@@ -520,6 +437,10 @@ def configuration(source_application=None, source_doctype=None, account=None):
 			result["delivery_information"] = _(
 				"Configure the required test destination on this notification rule."
 			)
+		elif result["redirect_supported"]:
+			result["delivery_information"] = _(
+				"Optional test recipient redirection is available. When enabled, notifications are sent only to the configured test destination and never to the original recipient."
+			)
 	return result
 
 
@@ -551,26 +472,32 @@ def account_query(doctype, txt, searchfield, start, page_len, filters):
 
 
 def on_doctype_update():
-	frappe.db.add_index("Notification Rule", ["enabled", "source_doctype"], "notification_source_rules")
+	frappe.db.add_index("Notification Rule", ["status", "source_doctype"], "notification_source_rules")
 
 
 def notification_destination(rule, account, recipient=None):
-	"""Resolve only the rule destination explicitly authorized by the provider."""
+	"""Resolve the effective destination under the rule's approved policy."""
 	if rule.account != account.name:
 		frappe.throw(_("The notification rule does not match the channel account."))
 	provider = frappe.db.get_value("Communication Channel", account.channel, "provider")
 	definition = provider_definition(provider)
 	required = "notification_redirect_required" in definition["capabilities"]
 	redirect = bool(rule.get("redirect_recipient"))
-	if not required and not redirect:
-		return dict(effective_recipient=recipient, emulator_contact=None, delivery_mode="Normal")
-	if (
+	redirected = required or redirect
+	if redirected and (
 		"recipient_redirect" not in definition["capabilities"]
 		or "notification_destination" not in definition["operations"]
 	):
 		frappe.throw(_("This provider does not support recipient redirection."))
-	validate_values(rule, operational=True)
-	result = operation(definition, "notification_destination", rule, account, recipient)
+	if not redirected and (recipient is None or not recipient.strip()):
+		return None
+	if redirected:
+		validate_values(rule, operational=True)
+	if "notification_destination" in definition["operations"]:
+		# Redirect operations receive only the configured destination inputs.
+		result = operation(definition, "notification_destination", rule, account, None if redirected else recipient)
+	else:
+		result = dict(effective_recipient=recipient, emulator_contact=None)
 	if (
 		not isinstance(result, dict)
 		or set(result) != {"effective_recipient", "emulator_contact"}
@@ -581,7 +508,8 @@ def notification_destination(rule, account, recipient=None):
 		or any(ord(c) < 32 or ord(c) == 127 for c in result["effective_recipient"])
 	):
 		frappe.throw(_("Invalid notification destination policy result."))
-	return dict(result, delivery_mode="Required" if required else "Redirected")
+	mode = "Required" if required else "Redirected" if redirect else "Normal"
+	return dict(result, delivery_mode=mode)
 
 
 def delivery_contract(rule):
@@ -613,7 +541,7 @@ def delivery_configuration(rule):
 	for row in rule.outputs:
 		if row.template_reference and row.send:
 			base = frappe.get_doc("Communication Template", row.template_reference, for_update=True)
-			templates[row.template_reference] = template_revision(base)
+			templates[row.template_reference] = published_revision(base)
 
 	external = {}
 	if "provider_templates" in definition["capabilities"]:
@@ -635,92 +563,21 @@ def delivery_configuration(rule):
 
 
 def delivery_fingerprint(rule, destination):
-	return definition_hash(
-		dict(rule=validation.fingerprint(rule, include_schedule=False), destination=destination)
-	)
-
-
-@contextmanager
-def _lock_template_reads():
-	previous = getattr(frappe.flags, "_lock_notification_rule_templates", False)
-	frappe.flags._lock_notification_rule_templates = True
-	try:
-		yield
-	finally:
-		frappe.flags._lock_notification_rule_templates = previous
+	return definition_hash(dict(rule=rule.approval_hash, destination=destination))
 
 
 @frappe.whitelist(methods=["POST"])
 def validate_process(candidate):
-	require_system_manager()
-	frappe.has_permission("Notification Rule", "write", throw=True)
+	name, modified = validation.action_identity(candidate, "Notification Rule")
 	lock_document_types("Communication Template", "Notification Rule")
-	with _lock_template_reads():
-		rule = validation._configuration(candidate, for_update=True, persisted_only=True)
-		if rule.doctype != "Notification Rule":
-			raise frappe.PermissionError(_("Invalid Process source"))
-		if validation.test_state(rule, remember_invalid=True) == "Passed":
-			raise frappe.ValidationError(_("This Notification Rule already has a current validation."))
-		savepoint = "validate_rule_" + frappe.generate_hash(length=8)
-		frappe.db.savepoint(savepoint)
-		try:
-			result = validation.test_method(rule.as_dict())
-			rule.enabled = 1 if result["status"] == "Passed" else 0
-			rule.save()
-			if result["status"] == "Passed":
-				validation.require_approved(rule)
-			return dict(
-				result,
-				lifecycle_status="Enabled" if result["status"] == "Passed" else rule.lifecycle_status,
-			)
-		except Exception:
-			frappe.db.rollback(save_point=savepoint)
-			raise
+	return approval.validate("Notification Rule", name, modified, validation.run_test)
 
 
 @frappe.whitelist(methods=["POST"])
 def set_active(candidate, active):
-	require_system_manager()
-	frappe.has_permission("Notification Rule", "write", throw=True)
-	if type(active) not in (int, bool, str) or active not in (0, 1, "0", "1"):
-		raise frappe.ValidationError(_("Invalid rule activation."))
-	active = int(active)
-	if active:
-		lock_document_types("Communication Template", "Notification Rule")
-	with _lock_template_reads() if active else nullcontext():
-		rule = validation._configuration(candidate, for_update=True, persisted_only=True)
-		if rule.doctype != "Notification Rule":
-			raise frappe.PermissionError(_("Invalid Process source"))
-		if active:
-			validate_rule(rule)
-			validate_notification_contract(rule)
-			validation.require_approved(rule)
-			from messaging.registry.processes.discovery import verify_registered_revision
-			verify_registered_revision(bind_definition(rule))
-		savepoint = "activate_rule_" + frappe.generate_hash(length=8)
-		frappe.db.savepoint(savepoint)
-		try:
-			rule.db_set("enabled", active)
-		except Exception:
-			frappe.db.rollback(save_point=savepoint)
-			raise
-		return dict(lifecycle_status="Enabled" if active else "Disabled")
-
-
-@frappe.whitelist()
-def state(name):
-	require_system_manager()
-	rule = frappe.get_doc("Notification Rule", name)
-	rule.check_permission("read")
-	tested = validation.test_state(rule, remember_invalid=True)
-	return dict(
-		lifecycle_status=("Enabled" if rule.enabled else "Disabled")
-		if tested == "Passed"
-		else "Unavailable"
-		if tested == "Unavailable"
-		else "Untested",
-		verification_error=rule.flags.process_verification_error,
-	)
+	name, modified = validation.action_identity(candidate, "Notification Rule")
+	lock_document_types("Communication Template", "Notification Rule")
+	return approval.set_active("Notification Rule", name, modified, active)
 
 
 def existing_default(definition, *, app, lock=False):
@@ -787,7 +644,7 @@ def save_rule(*, key, name, process, source_application, source_doctype, events,
         doc = existing_default(dict(key=key, process=process), app=app, lock=True)
         new = doc is None
         candidate = frappe.get_doc(dict(doctype='Notification Rule', __islocal=1, rule_name=name,
-            process_definition=process, enabled=0, source_application=source_application,
+            process_definition=process, source_application=source_application,
             source_doctype=source_doctype, events=events,
             notification_delay_minutes=notification_delay_minutes))
         declared = {item['name'] for item in contract['parameters']}
@@ -801,6 +658,10 @@ def save_rule(*, key, name, process, source_application, source_doctype, events,
         for row in candidate.outputs:
             output = outcomes[row.status_code]
             template_ref = output.get('template')
+            if doc and template_ref:
+                current = next((item.template_reference for item in doc.outputs if item.status_code == row.status_code), None)
+                if current and frappe.db.get_value('Communication Template', current, 'previous_name') == template_ref:
+                    template_ref = current
             if template_ref and not frappe.db.exists('Communication Template', template_ref):
                 registered = registered_template_definition(template_ref)
                 if registered:
@@ -832,8 +693,6 @@ def save_rule(*, key, name, process, source_application, source_doctype, events,
             for field in ('rule_name', 'notification_delay_minutes', 'events', 'process_parameters', 'outputs'):
                 value = candidate.get(field)
                 doc.set(field, [row.as_dict() for row in value] if isinstance(value, list) else value)
-            if current != desired:
-                doc.enabled = 0
         else:
             doc = candidate
             doc.application = app

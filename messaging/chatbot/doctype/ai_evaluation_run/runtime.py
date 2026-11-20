@@ -44,7 +44,7 @@ from .dependencies import (
 	POLICY,
 	evidence_invalidated,
 	invalidate,
-	operational_context,
+	matches_evaluation,
 	snapshot,
 )
 from .sampling import ALGORITHM, select_strata
@@ -59,6 +59,8 @@ APPROVAL_DIAGNOSTICS = {
 		if k.startswith("evaluation_")
 	},
 	"evaluation_passed": "The technical evaluation is approved and current.",
+	"provider_unavailable": configurations.DIAGNOSTICS["provider_unavailable"],
+	"provider_disabled": configurations.DIAGNOSTICS["provider_disabled"],
 }
 
 
@@ -199,8 +201,10 @@ def _coverage_error(missing):
 
 def _create(configuration, optional=None, seed=None, reproduces=None):
 	doc = _configuration(configuration, lock=True)
-	if not doc.enabled:
-		raise ai_providers.AIServiceError("configuration_disabled")
+	if doc.status not in ("Untested", "Unavailable"):
+		reject("Only untested or unavailable AI profiles can start an evaluation.")
+	provider = configurations.provider_for(doc)
+	configurations.require_provider_available(provider)
 	# This row lock also serializes simultaneous job requests for the same profile.
 	if frappe.db.get_value(
 		"AI Evaluation Run",
@@ -211,10 +215,9 @@ def _create(configuration, optional=None, seed=None, reproduces=None):
 		reject("An evaluation is already pending or running for this AI profile.")
 	if not doc.evaluation_generation:
 		# Additive initialization for profiles created before functional evaluation existed.
-		provider = configurations.provider_for(doc)
 		doc.evaluation_generation = uuid4().hex
-		doc.evaluation_basis = configurations.fingerprint(
-			provider,
+		doc.evaluation_basis = configurations.profile_fingerprint(
+			doc, provider,
 			configurations.configuration_values(doc, provider),
 			behavior_only=True,
 		)
@@ -231,19 +234,18 @@ def _create(configuration, optional=None, seed=None, reproduces=None):
 	mandatory_missing = [r for r in plan["insufficient"] if r.get("mandatory", True)]
 	if mandatory_missing:
 		frappe.throw(_coverage_error(mandatory_missing))
-	provider = configurations.provider_for(doc)
 	values = configurations.configuration_values(
 		doc, provider, required=doc.profile_type == "Decision"
 	)
 	if doc.profile_type == "Decision":
-		ai_providers.validate_configuration(provider, values)
+		ai_providers.validate_configuration(provider, values, policy=configurations.profile_policy(doc, provider))
 	selected, fixtures = [], []
 	if reproduces:
 		old = frappe.get_doc("AI Evaluation Run", reproduces)
 		old.check_permission("read")
 		if (
 			old.configuration != configuration
-			or old.dependency_fingerprint != plan["fingerprint"]
+			or not matches_evaluation(old, doc, plan["fingerprint"])
 			or evidence_invalidated(old)
 		):
 			reject(
@@ -331,15 +333,9 @@ def request_evaluation(configuration, optional=None, seed=None, reproduces=None)
 	try:
 		run = _create(configuration, optional, seed, reproduces)
 	except ai_providers.AIServiceError as exc:
-		if exc.code == "configuration_disabled":
-			frappe.throw(
-				_(
-					"The selected AI profile is disabled. Enable it before running an evaluation."
-				),
-				title=_("AI Profile Disabled"),
-			)
 		if exc.code in (
 			"provider_disabled",
+			"provider_unavailable",
 			"configuration_incomplete",
 			"contract_invalid",
 			"extraction_inactive",
@@ -543,6 +539,7 @@ def _aggregate(run):
 
 def _current(run, *, verify=False):
 	doc = _configuration(run.configuration, lock=True)
+	configurations.require_provider_available(configurations.provider_for(doc))
 	body, fingerprint, _rows = snapshot(doc, verify=verify)
 	if evidence_invalidated(run) or fingerprint != run.dependency_fingerprint:
 		invalidate(run, "Evaluation dependencies are no longer current.")
@@ -606,6 +603,7 @@ def execute(run_name):
 			values = configurations.configuration_values(
 				doc, provider, required=True
 			)
+			policy = configurations.profile_policy(doc, provider)
 			secrets = [
 				values.get(r.parameter_key)
 				for r in provider.parameters
@@ -641,9 +639,10 @@ def execute(run_name):
 				with evaluation_scope(
 					None, configuration=doc.name, evidence=evidence
 				), execution_deadline():
-					raw = ai_providers.run(provider, values, request)
+					raw = (ai_providers.run(provider, values, request, policy=policy) if policy is not None
+						else ai_providers.run(provider, values, request))
 				normalized, differences = compare_decision(
-					raw, request, refs, expected, values["minimum_confidence"]
+					raw, request, refs, expected, values.get("minimum_confidence"), policy=policy
 				)
 				technical, functional = True, not differences
 				diagnostic = (
@@ -723,17 +722,6 @@ def execute(run_name):
 		mark_unfinished_results_incomplete(
 			run.name, "evaluation_interrupted", limit=POLICY["max_calls"] + 1
 		)
-		if status == "Passed" and run.evidence_kind == "Real":
-			provider = configurations.provider_for(doc)
-			values = configurations.configuration_values(
-				doc, provider, required=True
-			)
-			configurations.diagnose(
-				doc,
-				"operational",
-				configurations.fingerprint(provider, values),
-				checked=True,
-			)
 		_write(
 			run,
 			status=status,
@@ -745,6 +733,11 @@ def execute(run_name):
 			if doc is None
 			else "evaluation_" + status.lower(),
 		)
+		if status == "Passed" and run.evidence_kind == "Real" and doc.status in ("Untested", "Unavailable"):
+			provider = configurations.provider_for(doc)
+			values = configurations.configuration_values(doc, provider, required=True)
+			configurations.set_profile_status(doc, "Enabled", reason="operational")
+			configurations.diagnose(doc, "operational", configurations.profile_fingerprint(doc, provider, values), checked=True)
 		frappe.db.commit()
 	except BaseException:
 		# Hard process death is reconciled explicitly by the administrative status endpoint.
@@ -756,7 +749,7 @@ def execute(run_name):
 
 
 def approval(doc, *, settings=None):
-	"""Runtime read: no permission elevation, calls, fallback or historical resurrection."""
+	"""Check persisted technical evidence without writes or provider calls."""
 	rows = frappe.get_all(
 		"AI Evaluation Run",
 		filters={"configuration": doc.name},
@@ -768,18 +761,13 @@ def approval(doc, *, settings=None):
 	if rows:
 		run = frappe.get_doc("AI Evaluation Run", rows[0].name)
 		try:
+			configurations.require_provider_available(configurations.provider_for(doc))
 			body, current, _rows = snapshot(doc, settings=settings)
 			if run.policy_version != POLICY["version"]:
 				code = "evaluation_policy"
-				if settings is None or body["context"] == operational_context():
-					invalidate(
-						run,
-						code,
-						observed=not (frappe.in_test or frappe.flags.in_test),
-					)
 			elif (
 				evidence_invalidated(run)
-				or current != run.dependency_fingerprint
+				or not matches_evaluation(run, doc, current)
 			):
 				stored = json.loads(run.manifest)["dependencies"]["context"]
 				code = (
@@ -787,13 +775,6 @@ def approval(doc, *, settings=None):
 					if stored != body["context"]
 					else "evaluation_invalidated"
 				)
-				# Candidate unsaved settings must not revoke the persisted operational context.
-				if settings is None or body["context"] == operational_context():
-					invalidate(
-						run,
-						code,
-						observed=not (frappe.in_test or frappe.flags.in_test),
-					)
 			elif run.evidence_kind != "Real":
 				code = "evaluation_test"
 			elif run.status == "Passed":
@@ -807,14 +788,10 @@ def approval(doc, *, settings=None):
 				)
 			else:
 				code = "evaluation_" + run.status.lower()
+		except configurations.AIServiceError as exc:
+			code = exc.code if exc.code in ("provider_disabled", "provider_unavailable") else "evaluation_invalidated"
 		except Exception:
 			code = "evaluation_invalidated"
-			if settings is None:
-				invalidate(
-					run,
-					code,
-					observed=not (frappe.in_test or frappe.flags.in_test),
-				)
 	return dict(
 		approved=code == "evaluation_passed",
 		status=code,

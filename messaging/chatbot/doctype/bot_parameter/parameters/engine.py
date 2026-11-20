@@ -111,7 +111,7 @@ def recognize(text, parameters):
 	Numeric candidates use the same token boundaries and validator as capture.
 	Colliding public labels receive ordinals, never technical identifiers.
 	"""
-	from messaging.registrations.ai_providers import InvalidInterpretation
+	from messaging.registry.ai_providers import InvalidInterpretation
 
 	if not isinstance(text, str) or len(text) > 16000:
 		raise InvalidInterpretation("Interpretation text exceeds the recognition bound")

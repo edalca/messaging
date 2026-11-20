@@ -350,6 +350,9 @@ def process_event(request, *, interpret_natural=False, provider=None, _resume_tu
 				turn.save(ignore_permissions=True)
 				frappe.db.commit()
 				return dict(turn_result(turn), configuration_required=True)
+			if request.get('external_reference'):
+				from messaging.conversation.doctype.chat_message.read_receipts import schedule_read_receipts
+				schedule_read_receipts(contact.account, [request['external_reference']])
 			state["language"] = language
 			decision, hold_message = {}, None
 			interpreted = False

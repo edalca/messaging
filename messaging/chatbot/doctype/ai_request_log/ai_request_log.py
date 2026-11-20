@@ -10,7 +10,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from messaging.common.write_guards import InternalWriteGuard
-from messaging.registrations.ai_providers import AICapability
+from messaging.registry.ai_providers import AICapability
 from messaging.security.permissions import is_system_manager
 
 _recording = InternalWriteGuard("messaging_ai_request_log")
@@ -34,7 +34,7 @@ def protected_json(value, *, secrets=(), public_values=()):
 	Secret reflections are removed even from keys or declared public identifiers.
 	An unsafe/oversized document is explicitly omitted, never silently sliced.
 	"""
-	from messaging.registrations.ai_providers import strict_json
+	from messaging.registry.ai_providers import strict_json
 	try:
 		if isinstance(value, (str, bytes, bytearray)):
 			if len(value) > MAX_DIAGNOSTIC_BYTES:
@@ -96,10 +96,10 @@ def protected_json(value, *, secrets=(), public_values=()):
 @contextmanager
 def provider_call(provider, values, request):
 	"""Collect one invocation, then write once after operational contract validation."""
-	from messaging.registrations.ai_providers import to_json, AICapability
+	from messaging.registry.ai_providers import to_json, AICapability, DecisionEvidence, DecisionClassification, DecisionSignal
 	import time
 	secrets = [values.get(row.parameter_key) for row in provider.parameters if row.field_type == "Password"]
-	if values.get("auth_type") == "Basic":
+	if provider.provider_type == "External" and values.get("auth_type") == "Basic":
 		secrets.extend((values.get("username"), base64.b64encode(
 			(values["username"] + ":" + values["auth_secret"]).encode()).decode()))
 	public = {request.request_id, request.schema_version, "recognized", "unrecognized", "ambiguous", "empty_catalog",
@@ -119,6 +119,9 @@ def provider_call(provider, values, request):
 		summary = summary if isinstance(summary, dict) else {'metadata_status': metadata_status}
 		normalized = call.get("normalized")
 		normalized_status = 'not_available'
+		if isinstance(normalized, DecisionEvidence):
+			public.update(DecisionClassification)
+			public.update(DecisionSignal)
 		if normalized is not None:
 			normalized, normalized_status = protected_json(to_json(normalized), secrets=secrets, public_values=public)
 		summary.update(provider_response=call.get("response"), response_status=call["response_status"],
@@ -178,20 +181,22 @@ def evaluation_scope(turn, *, configuration=None, evidence=None):
 		_scope.reset(token)
 
 
-def capture_response(body, *, context=None, public_values=()):
+def capture_response(body, *, context=None, public_values=(), protect_evaluation=False):
 	"""Capture provider JSON before adaptation, with optional provider-owned context.
 
 	Only protected JSON enters the request log. Evaluation raw evidence retains its
 	separate, explicit in-memory lifecycle and existing protection at persistence.
 	"""
 	scope = _scope.get()
-	if scope and scope.get('evidence') is not None:
+	if scope and scope.get('evidence') is not None and not protect_evaluation:
 		scope['evidence']['response'] = body[:250000] if isinstance(body, (str, bytes, bytearray)) else body
 	call = _call.get()
 	if call is not None:
 		declared = public_values if isinstance(public_values, (list, tuple, set, frozenset)) else ()
 		public = call['public_values'] | {v for v in declared if isinstance(v, str)}
 		call['response'], call['response_status'] = protected_json(body, secrets=call['secrets'], public_values=public)
+		if protect_evaluation and scope and scope.get('evidence') is not None:
+			scope['evidence']['response'] = call['response']
 		if context is not None:
 			call['context'], call['context_status'] = protected_json(context, secrets=call['secrets'], public_values=public)
 

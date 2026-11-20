@@ -5,6 +5,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from messaging.communication.doctype.process_definition.approval import is_current
 from messaging.chatbot.doctype.bot_settings.language import (
 	get_bot_settings,
 	resolve_process_language,
@@ -108,7 +109,7 @@ class BotSettings(Document):
 				from messaging.chatbot.doctype.ai_configuration.ai_configuration import error_code, DIAGNOSTICS
 				frappe.throw(_(DIAGNOSTICS[error_code(exc)]))
 		if self.interpretation_enabled and not self.active_ai_configuration:
-			frappe.throw(_("Select an enabled AI configuration that passed connection validation."))
+			frappe.throw(_("Select an enabled AI profile with a current technical evaluation."))
 
 
 	def _validate_registration(self, *, synchronize_fields=False, read_only=False) -> None:
@@ -236,7 +237,7 @@ def get_menu_flows(settings_doc: BotSettings | None = None) -> list[dict[str, An
 		if wf['workflow_code'] in assigned:
 			continue
 		flow = frappe.get_doc('Bot Flow', wf['workflow_code'])
-		if flow.test_state(remember_invalid=True) != 'Passed':
+		if not is_current(flow):
 			continue
 		eligible.append(wf)
 		wf['menu_label'] = text(flow, 'menu_label')

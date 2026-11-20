@@ -515,6 +515,8 @@ if (typeof frappe !== "undefined" && frappe.pages) {
 				}
 				const isIncoming = m.kind === "Incoming";
 				const originLabel = isIncoming ? "" : m.origin_label || "";
+				const content = m.source_type === "unsupported" && !m.content
+					? __("Unsupported message type") : m.content || "";
 				const iconsHtml = isIncoming ? "" : renderStatusIconsHtml(m.transport, m.send_state);
 				const errorHtml = m.send_state === "failed"
 					? `<div class="mc-msg-error-bar">` +
@@ -526,10 +528,11 @@ if (typeof frappe !== "undefined" && frappe.pages) {
 					`<div class="mc-msg ${isIncoming ? "is-incoming" : "is-outgoing"}" ` +
 					`data-kind="${mcHelpers.escapeHtml(m.kind)}" ` +
 					`data-message="${mcHelpers.escapeHtml(m.name || "")}" ` +
+					`data-sequence="${Number(m.sequence) || 0}" ` +
 					`data-send-state="${mcHelpers.escapeHtml(m.send_state || "")}" ` +
 					`aria-label="${mcHelpers.escapeHtml(mcHelpers.buildMessageAriaLabel(m))}">` +
 					(originLabel ? `<div class="mc-msg-origin">${mcHelpers.escapeHtml(originLabel)}</div>` : "") +
-					`<div class="mc-msg-content">${mcHelpers.escapeHtml(m.content || "")}</div>` +
+					`<div class="mc-msg-content">${mcHelpers.escapeHtml(content)}</div>` +
 					`<div class="mc-msg-meta">` +
 					`<span class="mc-msg-time" title="${mcHelpers.escapeHtml(mcHelpers.formatDateTime(msgStamp))}">${mcHelpers.escapeHtml(mcHelpers.formatTime(msgStamp))}</span>` +
 					iconsHtml +
@@ -661,23 +664,42 @@ if (typeof frappe !== "undefined" && frappe.pages) {
 			renderWorkspace(false);
 		}
 
+		const observedIncoming = new Set();
+
 		async function markSessionRead(session) {
-			if (!session || !session.is_mine || !session.message_sequence) return;
-			if ((session.read_sequence || 0) >= session.message_sequence) return;
+			if (!session || session.name !== state.selectedName || !session.is_mine
+				|| !session.message_sequence || document.hidden || !state.pageActive) return;
+			const timeline = els.timeline[0];
+			const bounds = timeline.getBoundingClientRect();
+			const top = Math.max(0, bounds.top);
+			const bottom = Math.min(window.innerHeight, bounds.bottom);
+			if (top >= bottom || !bounds.width) return;
+			let through = session.read_sequence || 0;
+			const visible = [];
+			for (const message of timeline.querySelectorAll('[data-kind="Incoming"]')) {
+				const rect = message.getBoundingClientRect();
+				if (rect.top < bottom && rect.bottom > top) {
+					through = Math.max(through, Number(message.dataset.sequence) || 0);
+					const name = message.dataset.message;
+					if (name && !observedIncoming.has(name)) visible.push(name);
+				}
+			}
+			if (!visible.length && through <= (session.read_sequence || 0)) return;
+			visible.forEach(name => observedIncoming.add(name));
 			try {
 				const seq = await callApi(`${API_BASE}.mark_read`, {
 					session_name: session.name,
-					through: session.message_sequence,
+					through, visible: JSON.stringify(visible),
 				}, {type: "POST"});
 				if (state.activeData && state.activeData.session && state.activeData.session.name === session.name) {
-					state.activeData.session.read_sequence = seq;
-					state.activeData.session.unread = 0;
+					state.activeData.session.read_sequence = Math.max(state.activeData.session.read_sequence || 0, seq);
+					if (seq >= session.message_sequence) state.activeData.session.unread = 0;
 				}
 				const target = state.sessions.find(r => r.name === session.name);
-				if (target) target.unread = 0;
+				if (target && seq >= session.message_sequence) target.unread = 0;
 				renderConversationList();
 			} catch (e) {
-				// Non-fatal read cursor update
+				visible.forEach(name => observedIncoming.delete(name));
 			}
 		}
 
@@ -709,7 +731,10 @@ if (typeof frappe !== "undefined" && frappe.pages) {
 				state.drafts.set(state.selectedName, els.composeInput.val());
 			}
 			const switching = state.selectedName !== sessionName;
-			if (switching) state.loadedLimit = 60;
+			if (switching) {
+				state.loadedLimit = 60;
+				observedIncoming.clear();
+			}
 			state.selectedName = sessionName;
 			els.root.addClass("mobile-detail-open");
 			renderConversationList();
@@ -930,6 +955,13 @@ if (typeof frappe !== "undefined" && frappe.pages) {
 				() => executeCloseAttention()
 			);
 		});
+		let readTimer;
+		const scheduleVisibleRead = () => {
+			clearTimeout(readTimer);
+			readTimer = setTimeout(() => markSessionRead(state.activeData?.session), 200);
+		};
+		els.timeline.on("scroll", scheduleVisibleRead);
+		$(document).on("visibilitychange.my_conversations", scheduleVisibleRead);
 		els.timeline.on("click", ".mc-load-more", () => {
 			if (!state.selectedName) return;
 			state.loadedLimit += 60;

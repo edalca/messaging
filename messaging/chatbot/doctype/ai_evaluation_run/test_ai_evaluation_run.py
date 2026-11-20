@@ -3,12 +3,7 @@ from messaging.chatbot.doctype.ai_evaluation_case_template.synchronization impor
 import copy
 import json
 import multiprocessing
-import ssl
-import subprocess
-import tempfile
-import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from datetime import timedelta
@@ -16,7 +11,7 @@ from unittest.mock import patch
 
 import frappe
 
-from messaging.registrations import ai_providers as wire
+from messaging.registry import ai_providers as wire
 from messaging.chatbot.doctype.ai_configuration import execution as ai_providers
 from messaging.chatbot.doctype.ai_configuration import ai_configuration as configurations
 from messaging.chatbot.doctype.ai_evaluation_case_template.test_ai_evaluation_case_template import messaging_evaluations, typed
@@ -49,18 +44,17 @@ def request_worker(site, sites_path, configuration, barrier, results):
 
 class TestAIEvaluationRun(unittest.TestCase):
     def test_disabled_profile_is_a_controlled_rejection_without_enqueue(self):
-        self.doc.enabled = 0; self.doc.save()
+        ai_providers.set_profile_status(self.doc, 'Disabled')
         profile = frappe.get_doc('AI Configuration', self.doc.name).as_dict()
         settings = frappe.get_doc('Bot Settings').as_dict()
         count = frappe.db.count('AI Evaluation Run')
         frappe.clear_last_message()
         with patch.object(frappe, 'enqueue') as enqueue, patch.object(ai_providers, 'run') as provider:
-            with self.assertRaisesRegex(frappe.ValidationError, 'The selected AI profile is disabled'):
+            with self.assertRaisesRegex(frappe.ValidationError, 'Only untested or unavailable AI profiles'):
                 runtime.request_evaluation(self.doc.name)
             enqueue.assert_not_called(); provider.assert_not_called()
         message = frappe.message_log[-1]
-        self.assertEqual(message['title'], 'AI Profile Disabled')
-        self.assertEqual(message['message'], 'The selected AI profile is disabled. Enable it before running an evaluation.')
+        self.assertIn('Only untested or unavailable AI profiles', message['message'])
         self.assertEqual(frappe.db.count('AI Evaluation Run'), count)
         self.assertEqual(frappe.get_doc('AI Configuration', self.doc.name).as_dict(), profile)
         self.assertEqual(frappe.get_doc('Bot Settings').as_dict(), settings)
@@ -110,10 +104,12 @@ class TestAIEvaluationRun(unittest.TestCase):
     def configuration(self, purpose='Decision'):
         provider = 'synthetic'
         if purpose != 'Decision':
+            from messaging.chatbot.doctype.ai_provider.ai_provider import set_provider_enabled
             provider = frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix + '_extract',
-                provider_name='Synthetic extraction', decision=0, parameter_extraction=1, enabled=1, schema_version='1')).insert().name
+                provider_name='Synthetic extraction', decision=0, parameter_extraction=1, schema_version='1')).insert().name
+            set_provider_enabled(provider, True)
         doc = frappe.get_doc(dict(doctype='AI Configuration', configuration_name=self.prefix + '_' + purpose.replace(' ', ''),
-            provider=provider, enabled=1, profile_type=purpose))
+            provider=provider, profile_type=purpose))
         if purpose == 'Decision':
             doc.append('parameters', dict(parameter_key='api_key', secret_value='synthetic-evaluation-secret'))
         with patch.object(configurations, 'run') as network:
@@ -121,7 +117,7 @@ class TestAIEvaluationRun(unittest.TestCase):
             network.assert_not_called()
         return doc
 
-    def response(self, provider, values, request):
+    def response(self, provider, values, request, **kwargs):
         return dict(schema_version='1', request_id=request.request_id,
             decision={k:v for k,v in dict(self.answers[request.message.text], confidence=.99).items() if k!='ambiguous'})
 
@@ -238,9 +234,82 @@ class TestAIEvaluationRun(unittest.TestCase):
         self.assertEqual((run.status, run.call_count, run.executed_count, run.passed_count), ('Passed', 16, 16, 16))
         self.assertEqual(run.evidence_kind, 'Test')
         self.assertEqual(runtime.approval(self.doc)['status'], 'evaluation_test')
+        self.assertEqual(self.doc.reload().status, 'Untested')
         for result in runtime._results(run.name):
             self.assertEqual((result.status, result.technical_valid, result.functional_valid), ('Passed', 1, 1))
             self.assertTrue(result.wire_request and result.raw_response and result.normalized_response)
+
+    def test_internal_evidence_is_technically_valid_with_informative_differences(self):
+        run = runtime._create(self.doc.name, seed='native-evidence')
+        manifest = json.loads(run.manifest)['dependencies']
+        self.assertEqual(manifest['capability_contract'], 'decision-evidence-v1')
+        self.assertEqual(manifest['policy']['version'], 'technical-required-v1')
+        with patch.object(frappe.db, 'commit'), patch.object(frappe.db, 'rollback'):
+            runtime.execute(run.name)
+        self.assertEqual(run.reload().status, 'Passed')
+        results = runtime._results(run.name)
+        self.assertTrue(all(row.technical_valid for row in results))
+        self.assertTrue(any(not row.functional_valid for row in results))
+        self.assertEqual(runtime.approval(self.doc)['status'], 'evaluation_test')
+
+    def test_profile_lifecycle_with_isolated_approval_evidence(self):
+        from frappe.utils.password import get_decrypted_password
+        from messaging.chatbot.doctype.ai_configuration.test_ai_configuration import successful_probe
+        from messaging.chatbot.doctype.ai_provider.test_ai_provider import sync_ai_providers
+        from messaging.registry.ai_providers.operations import retire_providers
+
+        self.assertEqual(self.doc.status, 'Untested')
+        with patch.object(configurations, 'run', side_effect=successful_probe):
+            self.assertTrue(configurations.test_connection(self.doc.name)['operational'])
+        self.assertEqual(self.doc.reload().status, 'Untested')
+        with self.assertRaises(ai_providers.AIServiceError):
+            configurations.resolve_configuration(self.doc.name)
+
+        # Exercise the production completion path with a transport double in the disposable database.
+        with patch.object(frappe, 'in_test', False), patch.dict(frappe.flags, in_test=False):
+            run = self.execute()
+            self.assertEqual(run.status, 'Passed')
+            self.assertEqual(self.doc.reload().status, 'Enabled')
+            self.assertTrue(runtime.approval(self.doc)['approved'])
+            generation = self.doc.evaluation_generation
+            ciphertext_owner = next(row for row in self.doc.parameters if row.parameter_key == 'api_key')
+
+            with patch.object(configurations, 'run', side_effect=wire.ProviderTimeout()):
+                self.assertEqual(configurations.test_connection(self.doc.name)['status'], 'timeout')
+            self.assertEqual(self.doc.reload().status, 'Enabled')
+            configurations.resolve_configuration(self.doc.name)
+            configurations.set_active(self.doc.name, False, str(self.doc.modified))
+            self.assertEqual(self.doc.reload().status, 'Disabled')
+            self.assertEqual(sync_ai_providers()['unchanged'], 1)
+            self.assertEqual(self.doc.reload().status, 'Disabled')
+
+            preserved = set(frappe.get_all('AI Provider', filters={'provider_type': 'Internal',
+                'application': 'messaging', 'name': ['!=', self.doc.provider]}, pluck='name'))
+            retire_providers('messaging', preserved)
+            self.assertEqual(frappe.db.get_value('AI Provider', self.doc.provider, 'status'), 'Unavailable')
+            self.assertEqual(self.doc.reload().status, 'Unavailable')
+            self.assertEqual(self.doc.validation_status, 'provider_unavailable')
+            self.assertFalse(run.reload().invalidated_at)
+            with self.assertRaises(ai_providers.AIServiceError):
+                runtime._create(self.doc.name)
+            with self.assertRaises(ai_providers.AIServiceError):
+                configurations.resolve_configuration(self.doc.name)
+            sync_ai_providers()
+            self.assertEqual(self.doc.reload().status, 'Disabled')
+            self.assertEqual(self.doc.evaluation_generation, generation)
+            self.assertEqual(configurations.set_active(self.doc.name, True, str(self.doc.modified))['status'], 'Enabled')
+            self.assertEqual(get_decrypted_password(ciphertext_owner.doctype, ciphertext_owner.name, 'secret_value'),
+                'synthetic-evaluation-secret')
+
+            self.doc.reload()
+            next(row for row in self.doc.parameters if row.parameter_key == 'model').value = '"changed"'
+            self.doc.save()
+            self.assertEqual(self.doc.status, 'Unavailable')
+            self.assertTrue(run.reload().invalidated_at)
+            failed = self.execute(response=lambda *_: {'schema_version': '1'})
+            self.assertEqual(failed.status, 'Failed')
+            self.assertEqual(self.doc.reload().status, 'Unavailable')
+            self.assertFalse(runtime.approval(self.doc)['approved'])
 
     def test_every_declared_decision_scenario_and_order(self):
         for case in self.catalog[0]['cases']:
@@ -265,7 +334,7 @@ class TestAIEvaluationRun(unittest.TestCase):
                 self.assertEqual(normalized['excluded_flows'], list(reversed(expected['excluded_flows'])))
 
     def test_wrong_functional_response_fails_with_specific_differences(self):
-        def wrong(provider, values, request):
+        def wrong(provider, values, request, **kwargs):
             result = self.response(provider, values, request)
             result['decision'] = dict(flows=[], excluded_flows=[], greeting_detected=False, human_attention_requested=False, outcome='ambiguous', confidence=.99)
             return result
@@ -307,7 +376,7 @@ class TestAIEvaluationRun(unittest.TestCase):
         optional, fixture = self.optional()
         fixture.input_text = 'Unique optional fixture'; fixture.save()
         run = runtime._create(self.doc.name, [optional.name])
-        def response(provider, values, request):
+        def response(provider, values, request, **kwargs):
             if request.message.text == 'Unique optional fixture':
                 return dict(schema_version='1', request_id=request.request_id, decision=dict(
                     flows=[], excluded_flows=[], greeting_detected=False, human_attention_requested=False, outcome='ambiguous', confidence=.99))
@@ -322,7 +391,7 @@ class TestAIEvaluationRun(unittest.TestCase):
     def test_interruption_preserves_completed_samples_and_no_replay(self):
         run = runtime._create(self.doc.name)
         count = 0
-        def stop(provider, values, request):
+        def stop(provider, values, request, **kwargs):
             nonlocal count
             count += 1
             if count == 3: raise KeyboardInterrupt()
@@ -397,7 +466,7 @@ class TestAIEvaluationRun(unittest.TestCase):
 
     def test_configuration_change_during_call_cannot_approve(self):
         changed = False
-        def response(provider, values, request):
+        def response(provider, values, request, **kwargs):
             nonlocal changed
             if not changed:
                 changed = True
@@ -467,7 +536,7 @@ class TestAIEvaluationRun(unittest.TestCase):
         values = configurations.configuration_values(self.doc, provider)
         configurations.diagnose(self.doc, 'operational', configurations.fingerprint(provider, values), checked=True)
         with self.assertRaises(ai_providers.AIServiceError) as error: configurations.resolve_configuration(self.doc.name)
-        self.assertEqual(error.exception.code, 'evaluation_missing')
+        self.assertEqual(error.exception.code, 'configuration_untested')
         settings = frappe.get_single('Bot Settings'); settings.active_ai_configuration = self.doc.name
         with self.assertRaises(frappe.ValidationError) as error: settings.validate_ai()
         self.assertIn('technical evaluation', str(error.exception))
@@ -486,14 +555,13 @@ class TestAIEvaluationRun(unittest.TestCase):
             real.policy_version = 'all-required-v1'
             self.assertEqual(runtime.approval(self.doc)['status'], 'evaluation_policy')
             self.assertFalse(runtime.approval(self.doc)['approved'])
-            # The obsolete policy invalidates the stored row. Restore only the in-memory copy
-            # so the next derived status is the current policy's running state.
+            # Reads report the obsolete policy without altering the historical row.
             real.policy_version = dependencies.POLICY['version']
             real.invalidated_at = None
             real.invalidation_reason = None
             real.status = 'Running'
             self.assertEqual(runtime.approval(self.doc)['status'], 'evaluation_running')
-        self.assertIsNotNone(frappe.db.get_value(run.doctype, run.name, 'invalidated_at'))
+        self.assertIsNone(frappe.db.get_value(run.doctype, run.name, 'invalidated_at'))
         self.assertEqual(frappe.db.get_value(run.doctype, run.name, 'evidence_kind'), 'Test')
 
     def test_concurrent_requests_use_real_database_current_reads(self):
@@ -522,67 +590,69 @@ class TestAIEvaluationRun(unittest.TestCase):
             frappe.delete_doc('AI Configuration', self.doc.name, force=True)
             frappe.db.commit()
 
-    def test_https_adapter_durable_evidence_and_invalid_raw_response(self):
-        answers = self.answers
-        class Handler(BaseHTTPRequestHandler):
-            malformed = False
-            def log_message(self, *args): pass
-            def do_POST(self):
-                request = wire.strict_json(self.rfile.read(int(self.headers['Content-Length'])))
-                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
-                body = b'malformed synthetic-evaluation-secret' if self.malformed else wire.serialize(dict(
-                    schema_version='1', request_id=request['request_id'], decision={k:v for k,v in dict(answers[request['message']['text']], confidence=.99).items() if k!='ambiguous'}))
-                self.wfile.write(body)
+    def test_rest_decision_evaluation_checks_evidence_and_never_approves_a_double(self):
+        from messaging.chatbot.doctype.ai_configuration.test_ai_configuration import (
+            JSON_HEADERS, rest_decision_body, simulated_rest_http,
+        )
+        from messaging.chatbot.doctype.ai_provider.ai_provider import set_provider_enabled
+        from messaging.registry.ai_providers.rest import DECISION_WIRE
+
         provider = frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix + '_https',
-            provider_name='Synthetic HTTPS evaluator', enabled=1, schema_version='1')).insert()
-        profile = None
-        with tempfile.TemporaryDirectory() as folder:
-            cert, key = Path(folder) / 'cert.pem', Path(folder) / 'key.pem'
-            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(key),
-                '-out', str(cert), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert, key)
-            server.socket = tls.wrap_socket(server.socket, server_side=True)
-            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-            try:
-                profile = frappe.get_doc(dict(doctype='AI Configuration', configuration_name=self.prefix + '_https',
-                    provider=provider.name, enabled=1))
-                for name, value in dict(endpoint=f'https://localhost:{server.server_port}/decision', auth_type='Bearer').items():
-                    profile.append('parameters', dict(parameter_key=name, value=json.dumps(value)))
-                profile.append('parameters', dict(parameter_key='auth_secret', secret_value='synthetic-evaluation-secret'))
-                profile.insert()
-                with patch.dict(frappe.conf, {'messaging_ai_allowed_hosts': ['localhost']}), patch.object(ai_providers.requests.certs, 'where', return_value=str(cert)):
-                    run = runtime._create(profile.name)
-                    frappe.db.commit()
-                    runtime.execute(run.name)
-                    frappe.db.rollback(); run.reload()
-                    self.assertEqual((run.status, run.call_count, run.evidence_kind), ('Passed', 16, 'Test'))
-                    self.assertFalse(runtime.approval(profile)['approved'])
-                    for result in runtime._results(run.name):
-                        self.assertTrue(json.loads(result.request_log_ids))
-                        self.assertNotIn('synthetic-evaluation-secret', result.raw_response)
-                    Handler.malformed = True
-                    failed = runtime._create(profile.name); frappe.db.commit(); runtime.execute(failed.name)
-                    failed.reload(); self.assertEqual(failed.status, 'Failed')
-                    result = runtime._results(failed.name)[0]
-                    self.assertIn('malformed', result.raw_response)
-                    self.assertNotIn('synthetic-evaluation-secret', result.raw_response)
-                    self.assertIn('Invalid interpretation JSON', result.diagnostic)
-            finally:
-                server.shutdown(); server.server_close(); thread.join(3)
-                frappe.db.rollback()
-                if profile:
-                    for run_name in frappe.get_all('AI Evaluation Run', filters={'configuration': profile.name}, pluck='name'):
-                        frappe.db.delete('AI Evaluation Result', {'evaluation_run': run_name})
-                        frappe.db.delete('AI Evaluation Run', {'name': run_name})
-                    for row in frappe.get_all('AI Request Log', filters={'configuration': profile.name}, fields=['name', 'error_log']):
-                        if row.error_log: frappe.db.delete('Error Log', {'name': row.error_log})
-                        frappe.db.delete('AI Request Log', {'name': row.name})
-                    if frappe.db.exists('AI Configuration', profile.name): frappe.delete_doc('AI Configuration', profile.name, force=True)
-                frappe.delete_doc('AI Provider', provider.name, force=True)
-                if frappe.db.exists('AI Configuration', self.doc.name): frappe.delete_doc('AI Configuration', self.doc.name, force=True)
-                frappe.db.commit()
+            provider_name='Synthetic HTTPS evaluator', decision=1)).insert()
+        set_provider_enabled(provider.name, True)
+        profile = frappe.get_doc(dict(doctype='AI Configuration', configuration_name=self.prefix + '_https',
+            provider=provider.name)).insert()
+        with self.assertRaisesRegex(frappe.ValidationError, 'configuration is incomplete'):
+            runtime.request_evaluation(profile.name)
+        secret = 'synthetic-evaluation-secret'
+        profile.append('parameters', dict(parameter_key='endpoint', value='"https://evaluation.example.test/decision"'))
+        next(row for row in profile.parameters if row.parameter_key == 'auth_type').value = '"Bearer"'
+        profile.append('parameters', dict(parameter_key='auth_secret', secret_value=secret))
+        profile.save()
+        failure = False
+
+        def reply(request, headers):
+            self.assertEqual(request['wire_version'], DECISION_WIRE)
+            self.assertEqual(headers['Authorization'], 'Bearer ' + secret)
+            self.assertNotIn(secret, json.dumps(request))
+            # All absent is contract-valid even when the fixture expects a selection.
+            if not failure:
+                return 200, JSON_HEADERS, wire.serialize(rest_decision_body(request))
+            return 200, JSON_HEADERS, b'malformed ' + secret.encode()
+
+        with simulated_rest_http(reply), patch.object(frappe.db, 'commit'), patch.object(frappe.db, 'rollback'):
+            self.assertTrue(configurations.test_connection(profile.name)['operational'])
+            self.assertEqual(profile.reload().status, 'Untested')
+            with self.assertRaises(frappe.ValidationError):
+                configurations.set_active(profile.name, 1, str(profile.modified))
+            run = runtime._create(profile.name, seed='rest-evidence')
+            runtime.execute(run.name)
+            run.reload()
+            self.assertEqual((run.status, run.evidence_kind), ('Passed', 'Test'))
+            self.assertEqual(run.policy_version, 'technical-required-v1')
+            self.assertEqual(json.loads(run.manifest)['dependencies']['capability_contract'], DECISION_WIRE)
+            self.assertEqual(runtime.approval(profile)['status'], 'evaluation_test')
+            results = runtime._results(run.name)
+            self.assertTrue(all(result.technical_valid and result.attempt_count == 1 for result in results))
+            self.assertTrue(any(not result.functional_valid for result in results))
+            for result in results:
+                self.assertTrue(json.loads(result.request_log_ids))
+                self.assertEqual(json.loads(result.wire_request)['wire_version'], DECISION_WIRE)
+                self.assertNotIn(secret, result.raw_response)
+            old_versions = dict(dependencies.WIRE_VERSIONS, Decision='decision-v1')
+            with patch.object(dependencies, 'WIRE_VERSIONS', old_versions):
+                self.assertEqual(runtime.approval(profile)['status'], 'evaluation_invalidated')
+            failure = True
+            failed = runtime._create(profile.name, seed='rest-malformed')
+            runtime.execute(failed.name)
+            failed.reload()
+            self.assertEqual(failed.status, 'Failed')
+            result = runtime._results(failed.name)[0]
+            self.assertEqual(json.loads(result.raw_response), None)
+            self.assertNotIn(secret, result.raw_response)
+            self.assertIn('Invalid interpretation JSON', result.diagnostic)
+        self.assertEqual(profile.reload().status, 'Untested')
+
 
     def test_uncovered_language_and_description_changes_preserve_current_scope(self):
         from messaging.chatbot.doctype.ai_evaluation_case_template.configuration import EvaluationTemplateDefinition

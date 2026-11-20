@@ -1,16 +1,16 @@
 """Code-owned emulator declaration; operations remain with Emulator."""
-from messaging import __version__
 from messaging.emulator.provider import (
     PROVIDER, CHANNEL, resolve_account, send, available, validate_notification,
     validate_template, authenticate_ingress, prepare_account_id, notification_destination,
 )
-from messaging.registrations.communication_providers import CommunicationCapability, CommunicationProvider, CommunicationProviderParameter, CommunicationOperations
+from messaging.emulator.version import __version__
+from messaging.registry.communication_providers import CommunicationCapability, CommunicationProvider, CommunicationProviderParameter, CommunicationOperations, TemplateScope
 
 
 def definition() -> CommunicationProvider:
     return CommunicationProvider(
         id=PROVIDER, name='Channel Emulator', version=__version__, app='messaging',
-        single_channel=True, fixed_channel_id=CHANNEL,
+        single_channel=True, fixed_channel_id=CHANNEL, template_scope=TemplateScope.CHANNEL,
         parameters=(
             CommunicationProviderParameter('notification_contact', 'Notification Emulated Contact', 'Link',
                 'Notification Rule', required=True, options='Emulator Contact',

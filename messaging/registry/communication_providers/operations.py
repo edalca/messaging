@@ -1,7 +1,7 @@
 import inspect
 import frappe
 from frappe import _
-from messaging.registrations.communication_providers import CommunicationProvider, normalize_definitions
+from .contracts import CommunicationProvider, normalize_definitions
 
 def validate_registration_schema(app, definitions):
     return normalize_definitions(app, definitions)

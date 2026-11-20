@@ -24,7 +24,7 @@ from messaging.chatbot.doctype.ai_evaluation_case_template.ai_evaluation_case_te
 	validate_group,
 	validate_language,
 )
-from messaging.registrations import ai_providers as wire
+from messaging.registry import ai_providers as wire
 from messaging.chatbot.doctype.bot_parameter.bot_parameter import (
 	get_handler,
 	get_supported_types,

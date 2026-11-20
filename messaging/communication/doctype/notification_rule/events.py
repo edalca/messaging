@@ -19,7 +19,6 @@ from messaging.communication.doctype.notification_rule.conditions import (
 	occurrence_key,
 )
 from messaging.communication.doctype.notification_rule.contract import (
-	_invalid,
 	prepared_data,
 	selected_output,
 )
@@ -29,13 +28,11 @@ from messaging.communication.doctype.notification_rule.notification_rule import 
 	notification_destination,
 	rule_index,
 	validate_notification_delay,
-	validate_rule,
 )
 from messaging.communication.doctype.process_definition.execution import (
 	execute_process,
 	is_process_test,
 )
-from messaging.registrations.processes import ProcessSchemaValidationError
 from messaging.communication.doctype.process_execution_log.process_execution_log import (
 	record_process_execution_log,
 )
@@ -62,7 +59,7 @@ def observe(doc, event):
 		if not row:
 			continue
 		rule = frappe.get_doc("Notification Rule", name)
-		if not rule.enabled or rule.source_doctype != doc.doctype:
+		if rule.status != "Enabled" or rule.source_doctype != doc.doctype:
 			continue
 		token = active_occurrences.set(active_occurrences.get() | {guard})
 		try:
@@ -116,22 +113,33 @@ def prepare(rule, doc, event, occurrence, key, captured_at, *, condition):
 		return
 	prepared = {}
 
-	def validate_context(arguments):
-		# Metadata/allowlist are revalidated at invocation; no arbitrary import at rule save.
-		validate_rule(rule)
-
 	def render(result):
 		row = selected_output(rule, result["status"])
 		prepared["output"] = row
-		prepared["data"] = prepared_data(result, rule)
-		reason = "send_disabled" if not row.send else ""
+		reason = "send_disabled"
+		if row.send:
+			account = frappe.get_doc("Communication Channel Account", rule.account)
+			try:
+				destination = notification_destination(rule, account, result["recipient"])
+			except frappe.ValidationError:
+				frappe.clear_last_message()
+				reason = "recipient_configuration_invalid" if (
+					rule.redirect_recipient
+					or "notification_redirect_required" in provider_definition(rule.provider_context)["capabilities"]
+				) else "recipient_invalid"
+			else:
+				if destination is None:
+					reason = "recipient_missing"
+				else:
+					prepared.update(account=account, destination=destination, data=prepared_data(result, rule))
+					reason = ""
 		return dict(
 			status=result["status"],
-			output_mode="Template" if prepared["data"] else "",
+			output_mode="Template" if not reason else "",
 			rendered_message="",
 			diagnostic="Notification suppressed: " + reason if reason else "",
-			template_reference=row.template_reference if prepared["data"] else None,
-			template_revision=prepared["data"]["template_revision"] if prepared["data"] else "",
+			template_reference=row.template_reference if not reason else None,
+			template_revision=prepared["data"]["template_revision"] if not reason else "",
 		)
 
 	with presentation_language(rule.process_language(), notification=True):
@@ -142,7 +150,6 @@ def prepare(rule, doc, event, occurrence, key, captured_at, *, condition):
 			source_name=rule.name,
 			execution_id=key,
 			invocation_mode=rule.process_invocation_mode,
-			prepare=validate_context,
 			render_result=render,
 			log_context=dict(existing_log=receipt.name, **context),
 		)
@@ -150,10 +157,10 @@ def prepare(rule, doc, event, occurrence, key, captured_at, *, condition):
 	# The business write may commit with this safe diagnostic; no automatic Process retry.
 	if not result["functional"] or prepared.get("data") is None:
 		return
-	account = frappe.get_doc("Communication Channel Account", rule.account)
+	account = prepared["account"]
 	provider = frappe.db.get_value("Communication Channel", account.channel, "provider")
 	delay = validate_notification_delay(rule.notification_delay_minutes)
-	destination = notification_destination(rule, account, prepared["data"]["recipient"])
+	destination = prepared["destination"]
 	effective = destination["effective_recipient"]
 	selected = prepared["output"]
 	provider_reference = (

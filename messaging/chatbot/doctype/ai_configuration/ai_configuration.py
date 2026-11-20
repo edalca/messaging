@@ -1,4 +1,5 @@
 """Independent interpreter configurations, encrypted values and validated operational state."""
+from dataclasses import asdict
 import json
 import traceback
 from uuid import uuid4
@@ -14,28 +15,35 @@ from messaging.security.permissions import require_system_manager
 from messaging.chatbot.doctype.ai_provider.ai_provider import validate_scalar, DEFINITION_FIELDS
 from messaging.chatbot.doctype.ai_configuration.execution import (
     AIServiceError, DIAGNOSTICS, configuration_values, diagnose, error_code, fingerprint,
-    provider_for, run, validate_configuration,
+    invalidate_configuration, profile_fingerprint, provider_for, require_provider_available, run, set_profile_status, validate_configuration,
 )
-from messaging.registrations.ai_providers import InvalidInterpretation, ProviderTimeout, ProviderUnavailable, DecisionRequest, Message, validate_response
+from messaging.registry.ai_providers import InvalidInterpretation, ProviderTimeout, ProviderUnavailable, DecisionRequest, Message
+from .policy import profile_policy, RESERVED_KEYS
 
 STATE_FIELDS = ('validation_status', 'last_checked', 'diagnostic', 'validated_hash', 'attempted_hash',
-    'evaluation_generation', 'evaluation_basis')
+    'evaluation_generation', 'evaluation_basis', 'evaluation_compatibility')
 
 
 class AIConfiguration(Document):
+    def db_set(self, fieldname, *args, **kwargs):
+        if {'status', *STATE_FIELDS}.intersection([fieldname] if isinstance(fieldname, str) else fieldname):
+            frappe.throw(_('Use the available actions to change Status.'), frappe.PermissionError)
+        return super().db_set(fieldname, *args, **kwargs)
+
     def onload(self):
-        try:
-            resolve_configuration(self.name)
-            code = 'operational'
-        except Exception as exc:
-            code = error_code(exc)
-        self.set_onload('ai_operational_status', _(DIAGNOSTICS[code]))
         from messaging.chatbot.doctype.ai_evaluation_run.runtime import approval
+        provider = provider_for(self)
+        self.set_onload('provider_available', provider.status == 'Enabled')
+        self.set_onload('provider_type', provider.provider_type)
         self.set_onload('functional_evaluation', approval(self))
 
     def before_validate(self):
         require_system_manager()
         old = self.get_doc_before_save()
+        status = old.status if old else 'Untested'
+        if (self.status or status) != status:
+            frappe.throw(_('Use the available actions to change Status.'), frappe.PermissionError)
+        self.status = status
         for key in STATE_FIELDS:
             self.set(key, old.get(key) if old else None)
 
@@ -47,17 +55,20 @@ class AIConfiguration(Document):
         provider = provider_for(self, lock=True)
         if not provider.get('decision' if self.profile_type == 'Decision' else 'parameter_extraction'):
             frappe.throw(_('The AI profile purpose must match the provider functional type.'))
-        if self.enabled and not provider.enabled:
-            frappe.throw(_('Select an enabled AI provider.'))
         old = self.get_doc_before_save()
+        if not old and provider.status != 'Enabled':
+            frappe.throw(_('Select an enabled AI provider.'))
         if old and (old.provider != self.provider or old.configuration_name != self.configuration_name):
             frappe.throw(_('AI Configuration identity and provider are immutable.'))
+        policy = profile_policy(self, provider, validate_inactive=True)
+        if policy is not None:
+            self.update(asdict(policy))
         old_rows = {row.name: row for row in old.parameters} if old else {}
         definitions = {row.parameter_key: row for row in provider.parameters}
         for row in self.parameters:
             stored = validate_value_owner(row, self)
             definition = definitions.get(row.parameter_key)
-            if not definition:
+            if not definition or row.parameter_key in RESERVED_KEYS:
                 frappe.throw(_('Invalid or duplicate provider parameter.'))
             if definition.field_type == 'Password':
                 prepare_secret(row, old_rows, stored)
@@ -65,6 +76,8 @@ class AIConfiguration(Document):
                 frappe.throw(_('Secrets must use encrypted Password storage.'))
         present = {r.parameter_key for r in self.parameters}
         for definition in provider.parameters:
+            if provider.provider_type == 'External' and definition.parameter_key == 'endpoint':
+                continue
             if definition.parameter_key not in present and definition.default_value not in (None, ''):
                 self.append('parameters', dict(parameter_key=definition.parameter_key,
                     value=json.dumps(validate_scalar(definition.as_dict(), definition.default_value))))
@@ -72,16 +85,20 @@ class AIConfiguration(Document):
         for row in self.parameters:
             if definitions[row.parameter_key].field_type != 'Password':
                 row.value = json.dumps(values[row.parameter_key], ensure_ascii=False, allow_nan=False)
-        current_hash = fingerprint(provider, values)
-        basis = fingerprint(provider, values, behavior_only=True)
-        if not old or basis != old.evaluation_basis or self.enabled != old.enabled:
+        basis = profile_fingerprint(self, provider, values)
+        changed = not old or basis != old.evaluation_basis or old.profile_type != self.profile_type
+        if changed:
             self.evaluation_generation = uuid4().hex
-        self.evaluation_basis = basis
-        if current_hash != self.attempted_hash:
-            self.validation_status = 'not_validated'
-            self.diagnostic = _(DIAGNOSTICS['not_validated'])
+            self.evaluation_compatibility = None
+            self.attempted_hash = None
             self.validated_hash = None
-        self.flags.ai_probe_needed = current_hash != self.attempted_hash
+            if self.status in ('Enabled', 'Disabled', 'Unavailable'):
+                self.status = 'Unavailable'
+            code = 'evaluation_invalidated' if self.status == 'Unavailable' else 'not_validated'
+            self.validation_status = code
+            self.diagnostic = _(DIAGNOSTICS[code])
+        self.evaluation_basis = basis
+        self.flags.check_local_configuration = changed
 
     def on_update(self):
         old = self.get_doc_before_save()
@@ -89,18 +106,15 @@ class AIConfiguration(Document):
         for row in old.parameters if old else []:
             if row.name not in keep:
                 remove_encrypted_password('AI Configuration Value', row.name, 'secret_value')
-        if self.profile_type == 'Parameter Extraction':
+        if self.profile_type == 'Parameter Extraction' and self.status == 'Untested':
             diagnose(self, 'extraction_inactive')
-        elif self.flags.ai_probe_needed or (old and old.profile_type != self.profile_type):
-            # Saving validates local structure only; provider consumption is explicit.
+        elif self.flags.check_local_configuration and self.status == 'Untested':
             provider = provider_for(self)
             try:
-                values = configuration_values(self, provider, required=True)
-                validate_configuration(provider, values)
-                code = 'not_validated'
-            except Exception as exc:
-                code = error_code(exc)
-            diagnose(self, code)
+                validate_configuration(provider, configuration_values(self, provider, required=True),
+                    policy=profile_policy(self, provider))
+            except AIServiceError as exc:
+                diagnose(self, exc.code)
         from messaging.chatbot.doctype.ai_evaluation_run.dependencies import dependencies_changed
         dependencies_changed(self)
 
@@ -122,9 +136,10 @@ def check_connection(doc):
     try:
         provider = provider_for(doc, lock=True)
         values = configuration_values(doc, provider)
-        current_hash = fingerprint(provider, values)
+        current_hash = profile_fingerprint(doc, provider, values)
         configuration_values(doc, provider, required=True)
-        validate_configuration(provider, values)
+        policy = profile_policy(doc, provider)
+        validate_configuration(provider, values, policy=policy)
         # A synthetic classification exchange checks authentication and the same contract;
         # it never loads or invokes a business Flow.
         from messaging.chatbot.doctype.bot_settings.language import resolve_process_language
@@ -132,7 +147,10 @@ def check_connection(doc):
         request = DecisionRequest(uuid4().hex, Message('Connection check.'), resolve_process_language(),
             greeting_available=True)
         with evaluation_scope(None, configuration=doc.name):
-            validate_response(run(provider, values, request), request)
+            if policy is None:
+                run(provider, values, request)
+            else:
+                run(provider, values, request, policy=policy)
         code = 'operational'
     except Exception as exc:
         code = error_code(exc)
@@ -157,8 +175,39 @@ def check_connection(doc):
 def test_connection(configuration):
     require_system_manager()
     doc = frappe.get_doc('AI Configuration', configuration, for_update=True)
+    doc.check_permission('read')
     doc.check_permission('write')
     return check_connection(doc)
+
+
+@frappe.whitelist(methods=['POST'])
+def set_active(configuration, active, modified):
+    require_system_manager()
+    doc = frappe.get_doc('AI Configuration', configuration, for_update=True)
+    doc.check_permission('read')
+    doc.check_permission('write')
+    if str(doc.modified) != modified:
+        frappe.throw(_('The document changed. Reload it before changing Status.'), frappe.TimestampMismatchError)
+    if type(active) not in (bool, int, str) or active not in (True, False, '0', '1'):
+        frappe.throw(_('Invalid AI profile action.'))
+    if active in (True, '1'):
+        if doc.status != 'Disabled':
+            frappe.throw(_('This action is unavailable for the current Status.'))
+        try:
+            _approved_configuration(doc)
+        except AIServiceError as exc:
+            return _activation_failed(doc, exc.code)
+        set_profile_status(doc, 'Enabled')
+    else:
+        if doc.status != 'Enabled':
+            frappe.throw(_('This action is unavailable for the current Status.'))
+        set_profile_status(doc, 'Disabled')
+    return dict(status=doc.status)
+
+
+def _activation_failed(doc, code):
+    invalidate_configuration(doc, code)
+    return dict(status=doc.status, diagnostic=_(DIAGNOSTICS[code]))
 
 
 def resolve_configuration(name, *, for_update=False, settings=None):
@@ -167,15 +216,18 @@ def resolve_configuration(name, *, for_update=False, settings=None):
     doc = frappe.get_doc('AI Configuration', name, for_update=for_update)
     if doc.profile_type != 'Decision':
         raise AIServiceError('decision_required' if doc.profile_type != 'Parameter Extraction' else 'extraction_inactive')
-    if not doc.enabled:
-        raise AIServiceError('configuration_disabled')
-    provider = provider_for(doc, lock=for_update)
+    if doc.status != 'Enabled':
+        code = {'Disabled': 'configuration_disabled', 'Untested': 'configuration_untested'}.get(doc.status)
+        if not code:
+            code = doc.validation_status if doc.validation_status in DIAGNOSTICS and doc.validation_status != 'operational' else 'configuration_unavailable'
+        raise AIServiceError(code)
+    return _approved_configuration(doc, settings=settings)
+
+
+def _approved_configuration(doc, *, settings=None):
+    provider = provider_for(doc)
     values = configuration_values(doc, provider, required=True)
-    validate_configuration(provider, values)
-    if doc.validation_status != 'operational':
-        raise AIServiceError(doc.validation_status if doc.validation_status in DIAGNOSTICS else 'not_validated')
-    if fingerprint(provider, values) != doc.validated_hash:
-        raise AIServiceError('not_validated')
+    validate_configuration(provider, values, policy=profile_policy(doc, provider))
     from messaging.chatbot.doctype.ai_evaluation_run.runtime import approval
     state = approval(doc, settings=settings)
     if not state['approved']:
@@ -202,7 +254,7 @@ def availability(settings=None):
 @frappe.whitelist()
 def dashboard():
     require_system_manager()
-    configurations = frappe.get_list('AI Configuration', fields=['name','provider','profile_type','enabled','validation_status','last_checked','diagnostic'], limit_page_length=0)
+    configurations = frappe.get_list('AI Configuration', fields=['name','provider','profile_type','status','validation_status','last_checked','diagnostic'], limit_page_length=0)
     for row in configurations:
         try:
             resolve_configuration(row.name)
@@ -212,7 +264,7 @@ def dashboard():
             row.validation_status = error_code(exc)
             row.diagnostic = _(DIAGNOSTICS[row.validation_status])
     return dict(availability=availability(),
-        providers=frappe.get_list('AI Provider', fields=['name','provider_name','provider_type','decision','parameter_extraction','enabled'], limit_page_length=0),
+        providers=frappe.get_list('AI Provider', fields=['name','provider_name','provider_type','decision','parameter_extraction','status'], limit_page_length=0),
         configurations=configurations)
 
 
@@ -223,17 +275,26 @@ def on_doctype_update():
         .where(profile.profile_type.isnull() | (profile.profile_type == ''))).run()
 
 
-def invalidate_provider_configurations(provider):
-    """Retain values and encrypted secrets while revoking operational approval."""
-    from messaging.chatbot.doctype.ai_configuration.execution import invalidate_configuration
-    from messaging.chatbot.doctype.ai_evaluation_run.dependencies import dependencies_changed
-    for name in frappe.get_all('AI Configuration', filters={'provider': provider}, pluck='name'):
-        doc = frappe.get_doc('AI Configuration', name, for_update=True)
-        invalidate_configuration(doc)
-        dependencies_changed(doc)
-
-
 def provider_changed(provider, method=None):
+    from messaging.chatbot.doctype.ai_evaluation_run.dependencies import dependencies_changed
+    from messaging.chatbot.doctype.ai_evaluation_run.runtime import approval
+
     previous = provider.get_doc_before_save()
-    if previous and fingerprint(previous, {}) != fingerprint(provider, {}):
-        invalidate_provider_configurations(provider.name)
+    if not previous:
+        return
+    changed = fingerprint(previous, {}) != fingerprint(provider, {})
+    if not changed and previous.status == provider.status:
+        return
+    for name in frappe.get_all('AI Configuration', filters={'provider': provider.name}, pluck='name', order_by='name'):
+        doc = frappe.get_doc('AI Configuration', name, for_update=True)
+        if changed:
+            invalidate_configuration(doc)
+        elif provider.status != 'Enabled' and doc.status in ('Enabled', 'Disabled'):
+            invalidate_configuration(doc, 'provider_unavailable' if provider.provider_type == 'Internal' else 'provider_disabled')
+        elif (provider.status == 'Enabled' and doc.status == 'Unavailable'
+              and doc.validation_status in ('provider_unavailable', 'provider_disabled')):
+            if approval(doc)['approved']:
+                set_profile_status(doc, 'Disabled', reason='operational')
+            else:
+                invalidate_configuration(doc)
+    dependencies_changed(provider)

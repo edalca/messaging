@@ -20,6 +20,7 @@ from messaging.emulator.doctype.emulator_contact.fixtures import (
 )
 from messaging.communication.doctype.communication_provider.test_communication_provider import sync_communication_providers
 from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.chatbot.doctype.bot_settings.interpretation import Decision
 from messaging.conversation.doctype.chat_turn import test_chat_turn as native
 from messaging.conversation.doctype.chat_session import inbox, human
@@ -150,14 +151,16 @@ class TestEmulatorContact(unittest.TestCase):
 	def test_channel_account_provider_and_user_authorization(self):
 		for target in ['provider','channel','account']:
 			if target=='provider':set_provider_enabled(PROVIDER,False)
+			elif target=='channel':set_channel_status(CHANNEL, 'Disabled')
 			else:
-				doc=frappe.get_doc('Communication Channel' if target=='channel' else 'Communication Channel Account',CHANNEL if target=='channel' else self.a)
+				doc=frappe.get_doc('Communication Channel Account',self.a)
 				doc.enabled=0;doc.save()
 			frappe.db.commit()
 			try:
 				with self.assertRaises(frappe.PermissionError):self.message()
 			finally:
 				if target=='provider':set_provider_enabled(PROVIDER,True)
+				elif target=='channel':set_channel_status(CHANNEL, 'Enabled')
 				else:doc.reload();doc.enabled=1;doc.save()
 				frappe.db.commit()
 		frappe.set_user('Guest')
@@ -441,7 +444,7 @@ class TestEmulrSetup(unittest.TestCase):
 			'Communication Channel', 'Communication Channel Account', 'Process Definition',
 			'Communication Template', 'Notification Rule', 'Bot Flow', 'Notification Queue',
 			'Chat Session', 'Chat Message')}
-		enabled = frappe.db.get_value('Communication Provider', 'EMULR', 'enabled')
+		status = frappe.db.get_value('Communication Provider', 'EMULR', 'status')
 		sync_communication_providers()
 		doc = frappe.get_doc('Communication Provider', 'EMULR')
 		self.assertEqual(doc.provider_name, 'Channel Emulator')
@@ -457,7 +460,7 @@ class TestEmulrSetup(unittest.TestCase):
 		self.assertEqual(parameters['transport_outcome'].scope, 'Account')
 		self.assertEqual(parameters['transport_outcome'].options, 'Accepted\nRejected\nUnknown')
 		self.assertEqual(parameters['transport_outcome'].default_value, 'Accepted')
-		self.assertEqual(frappe.db.get_value('Communication Provider', 'EMULR', 'enabled'), enabled if enabled is not None else 0)
+		self.assertEqual(frappe.db.get_value('Communication Provider', 'EMULR', 'status'), status or 'Disabled')
 		modified = doc.modified
 		names = [row.name for row in doc.parameters]
 		sync_communication_providers()

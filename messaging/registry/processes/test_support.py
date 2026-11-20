@@ -1,5 +1,5 @@
 """Module-level process fixtures with a small, stable source closure."""
-from messaging.registrations.processes import BotParams, BotRequest, BotResponse, NotifyNoResponse, NotifyParams, NotifyRequest, NotifyResponse, ProcessOutcomes
+from messaging.registry.processes import BotParams, BotRequest, BotResponse, NotifyNoResponse, NotifyParams, NotifyRequest, NotifyResponse, ProcessOutcomes
 
 
 def bot_definition(*, params: BotParams, outcomes: ProcessOutcomes) -> None:

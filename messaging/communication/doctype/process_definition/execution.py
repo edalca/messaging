@@ -14,9 +14,8 @@ from frappe import _
 
 from messaging.chatbot.doctype.bot_settings import language as bot_language
 from messaging.chatbot.doctype.bot_settings.localization import get_internal_error_message
-from messaging.common.locking import shared_document
 from messaging.common.primitives import _freeze, decimal_json, identity_key
-from messaging.registrations.processes import BotRequest, NotifyNoResponse, NotifyRequest, ProcessContactReference, ProcessReference, ProcessSchemaValidationError, validate_captured_process_argument, validate_process_schema_v1
+from messaging.registry.processes import BotRequest, NotifyNoResponse, NotifyRequest, ProcessContactReference, ProcessReference, ProcessSchemaValidationError, validate_captured_process_argument, validate_process_schema_v1
 from messaging.communication.doctype.process_definition.process_definition import (
     DOTTED_METHOD_PATH_PATTERN,
     FORBIDDEN_PROCESS_PREFIXES,
@@ -47,7 +46,6 @@ from messaging.communication.doctype.process_definition.process_definition impor
     bind_definition,
     controlled_reads,
     decimal_rows,
-    definition_revision,
     effect_boundary,
     install_read_access,
     is_process_test,
@@ -239,8 +237,12 @@ def execute_process(
 			if candidate.doctype != expected_type:
 				raise frappe.PermissionError(_("Invalid Process source"))
 			candidate.check_permission("create" if candidate.is_new() else "write")
+		from messaging.communication.doctype.process_definition import approval
+
+		persisted = candidate or (frappe.get_doc(source_type, source_name) if administrative_test
+			else approval.lock_execution(source_type, source_name))
 		if source_type == "Bot Flow":
-			workflow = candidate if candidate is not None else shared_document("Bot Flow", source_name)
+			workflow = persisted
 			if workflow.status != "Enabled" and not administrative_test:
 				raise frappe.PermissionError(_("Process authorization is unavailable"))
 			if not workflow.is_new():
@@ -250,9 +252,9 @@ def execute_process(
 			process_method = workflow.process_method
 			invocation_mode = workflow.process_invocation_mode
 		else:
-			configured = candidate if candidate is not None else frappe.get_doc("Notification Rule", source_name)
+			configured = persisted
 			if source_type == "Notification Rule" and not administrative_test:
-				if not configured.enabled or not (is_automation() or is_system_manager()):
+				if configured.status != "Enabled" or not (is_automation() or is_system_manager()):
 					raise frappe.PermissionError(_("Process authorization is unavailable"))
 			if source_type == "Notification Rule" and render_result is None:
 				render_result = lambda response: configured._render_process_result(
@@ -264,11 +266,11 @@ def execute_process(
 			invocation_mode = configured.process_invocation_mode
 		owner = workflow if source_type == "Bot Flow" else configured
 		definition = bind_definition(owner)
-		runtime_evidence.update(owner.runtime_evidence(definition, administrative_test=administrative_test))
+		runtime_evidence.update(approval.runtime_evidence(owner, definition, administrative_test=administrative_test))
 		process_method = definition.method
 		invocation_mode = "Internal Call (frappe.call)"
 		if not administrative_test:
-			owner.require_approved()
+			approval.require_approved(owner, definition)
 		path = validate_process_method_path(process_method)
 		if path.split(".")[0] not in frappe.get_installed_apps():
 			raise frappe.PermissionError(_("Process application is unavailable"))
@@ -311,9 +313,6 @@ def execute_process(
 			> 65536
 		):
 			raise frappe.ValidationError(_("Process arguments exceed the technical size limit"))
-		if not administrative_test:
-			phase = "readiness"
-			owner.require_approved()
 		phase = "context"
 		context = build_context(
 			definition,

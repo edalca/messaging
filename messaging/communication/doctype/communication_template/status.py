@@ -7,7 +7,8 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
-from messaging.registrations.communication_providers import validate_template_availability, validate_template_status_result
+from messaging.registry.communication_providers import validate_template_status_result
+from messaging.security.execution_context import automatic_job
 
 _STATUS_WRITE = ContextVar('messaging_template_status_write', default=False)
 
@@ -76,7 +77,7 @@ def _reject_duplicate_scopes(doc):
 		seen.add(identity)
 
 
-def apply_template_status_result(doc, result):
+def apply_template_status_result(doc, result, *, automatic=False):
 	"""Store a normalized reading. Unknown and error keep the last valid status."""
 	try:
 		reading = validate_template_status_result(result)
@@ -105,7 +106,7 @@ def apply_template_status_result(doc, result):
 	_reject_duplicate_scopes(doc)
 	doc.provider_status = provider_status_summary(doc)
 	with template_status_write():
-		doc.save()
+		doc.save(ignore_permissions=automatic)
 	return doc
 
 
@@ -127,10 +128,16 @@ def _definition_for(doc):
 	return definition
 
 
-def sync_template_status(doc, account=None):
+def sync_template_status(doc, account=None, *, automatic=False):
 	"""Ask the provider once and persist the normalized result. A failed call keeps the last valid status."""
 	from messaging.communication.doctype.communication_provider.communication_provider import operation
 	definition = _definition_for(doc)
+	from .external import managed, refresh_template
+	if managed(definition):
+		if account and account != doc.account:
+			frappe.throw(_('The template does not match the channel account.'))
+		refresh_template(doc.name, automatic=automatic, channel=doc.channel, account=doc.account)
+		return doc.reload()
 	if account and doc.channel != frappe.db.get_value('Communication Channel Account', account, 'channel'):
 		frappe.throw(_('The template channel does not match the channel account.'))
 	try:
@@ -139,14 +146,15 @@ def sync_template_status(doc, account=None):
 		frappe.log_error(title='template_status_query_failed', message=doc.name)
 		result = dict(outcome='error', template=doc.name, scope_type='account' if account else 'provider',
 			scope_key=account or doc.provider, error_code='sync_failed')
-	return apply_template_status_result(doc, result)
+	return apply_template_status_result(doc, result, automatic=automatic)
 
 
 def accept_template_status_update(provider, payload):
 	"""Normalize an external provider event and persist it. No webhook route is registered here."""
 	from messaging.communication.doctype.communication_provider.communication_provider import operation, provider_definition
 	definition = provider_definition(provider)
-	if 'template_status' not in definition.get('capabilities', []) or 'apply_template_status_update' not in definition.get('operations', {}):
+	from .external import managed
+	if managed(definition) or 'template_status' not in definition.get('capabilities', []) or 'apply_template_status_update' not in definition.get('operations', {}):
 		frappe.throw(_('This provider does not accept template status updates.'))
 	try:
 		result = operation(definition, 'apply_template_status_update', payload)
@@ -160,49 +168,41 @@ def accept_template_status_update(provider, payload):
 
 
 def template_send_block(template, account):
-	"""Return a safe deferral code, or None when external status does not block this account.
+	"""Protect delivery for providers that require verified external evidence."""
+	from .external import managed, provider_definition, published_block, requires_published
 
-	Providers without the capability never block. An unknown reading is not a disapproval:
-	it blocks only when that provider requires external authorization.
-	"""
-	from messaging.communication.doctype.communication_provider.communication_provider import operation, provider_definition
-	if not template.provider:
-		return 'template_not_active'
 	try:
 		definition = provider_definition(template.provider)
+		if managed(definition):
+			return published_block(template, definition, account)
+		if requires_published(definition):
+			return 'template_status_unknown'
 	except Exception:
-		return 'template_status_unknown'
-	if 'template_status' not in definition.get('capabilities', []):
-		return None
-	if 'template_available' not in definition.get('operations', {}):
-		return 'template_status_unknown'
-	try:
-		decision = validate_template_availability(operation(definition, 'template_available', template, account))
-	except Exception:
-		return 'template_status_unknown'
-	if decision['available'] is True:
-		return None
-	if decision['available'] is False:
-		return 'template_unavailable'
-	if decision['authorization_required']:
 		return 'template_status_unknown'
 	return None
 
 
-def notification_template_gate(reference, account, variables=None):
+
+def notification_template_gate(reference, account, variables=None, *, expected_revision=None, live=False):
 	"""Re-check a queued notification template before handoff."""
 	if not reference:
 		return None
 	if not frappe.db.exists('Communication Template', reference):
 		return 'template_missing'
-	template = frappe.get_doc('Communication Template', reference)
+	template = frappe.get_doc('Communication Template', reference, for_update=live)
 	if template.status != 'Active':
 		return 'template_not_active'
-	from messaging.communication.doctype.communication_channel_account.communication_channel_account import account_provider
 	from messaging.communication.doctype.communication_provider.communication_provider import provider_definition
 	from messaging.communication.doctype.communication_provider_value.values import validate_values
 	if template.channel != frappe.db.get_value('Communication Channel Account', account, 'channel'):
 		return 'template_channel_mismatch'
+	from .external import managed, published_block
+	try:
+		definition = provider_definition(template.provider)
+		if managed(definition):
+			return published_block(template, definition, account, expected_revision=expected_revision, live=live)
+	except Exception:
+		return 'template_status_unknown'
 	try:
 		validate_values(template, operational=True)
 		if variables is not None and 'provider_templates' not in provider_definition(template.provider)['capabilities']:
@@ -224,6 +224,40 @@ def synchronize_template_status(name, account=None):
 		account = None
 	elif not frappe.db.exists('Communication Channel Account', account):
 		frappe.throw(_('Select an existing Communication Channel Account.'))
+	if account:
+		frappe.get_doc('Communication Channel Account', account).check_permission('read')
+	from .external import managed
+	if not managed(_definition_for(doc)):
+		doc = frappe.get_doc('Communication Template', name, for_update=True)
 	sync_template_status(doc, account)
 	doc.reload()
 	return dict(provider_status=doc.provider_status, statuses=[row.as_dict() for row in doc.statuses])
+
+
+def schedule_template_refresh(definition, binding, payload):
+	from messaging.security.execution_context import require_authenticated_adapter
+
+	require_authenticated_adapter(definition['id'], binding.name)
+	references = payload['templates']
+	if ('template_status' not in definition['capabilities'] or not isinstance(references, list)
+		or any(not isinstance(name, str) or not name or len(name) > 140 for name in references)):
+		frappe.throw(_('Invalid template status update.'))
+	for name in references:
+		frappe.enqueue(refresh_account_template, enqueue_after_commit=True,
+			name=name, provider=definition['id'], channel=binding.channel, account=binding.name)
+	return len(references)
+
+
+@automatic_job
+def refresh_account_template(name, provider, channel, account):
+	from messaging.communication.doctype.communication_channel_account.binding import resolve_binding
+
+	definition, binding = resolve_binding(provider, account)
+	from .external import managed, refresh_template
+	if managed(definition):
+		if frappe.db.exists('Communication Template', name):
+			return refresh_template(name, automatic=True, provider=provider, channel=channel, account=account)
+		return
+	doc = frappe.get_doc('Communication Template', name, for_update=True)
+	if doc.provider == provider and doc.channel == channel == binding.channel:
+		sync_template_status(doc, account, automatic=True)

@@ -4,7 +4,7 @@ import frappe
 from frappe import _
 from messaging.registry import _catalog
 from messaging.security.permissions import installed_applications
-from messaging.registrations.ai_providers import AIProvider, AIProviderParameter, AIServiceError
+from .contracts import AIProvider, AIProviderParameter, AIServiceError
 
 def register_ai_providers(*, app: str, providers: tuple[AIProvider, ...]):
     """Register the owner's typed definitions through the storage-only DocType writer."""
@@ -51,8 +51,9 @@ def _declared(app, definitions):
             if capability is not None:
                 require_provider_function(capability.execute, app, None, None)
         require_provider_function(raw.validate_configuration, app, None)
-        raw = {key: getattr(raw, key) for key in ('provider_id', 'provider_name', 'description', 'enabled', 'schema_version', 'parameters', 'decision', 'parameter_extraction')}
-        raw['parameters'] = [asdict(p) for p in raw['parameters']]
+        parameters = internal_parameters(raw)
+        raw = {key: getattr(raw, key) for key in ('provider_id', 'provider_name', 'description', 'schema_version', 'parameters', 'decision', 'parameter_extraction')}
+        raw['parameters'] = parameters
         raw['decision'] = int(raw['decision'] is not None)
         raw['parameter_extraction'] = int(raw['parameter_extraction'] is not None)
         provider_id = raw['provider_id']
@@ -62,6 +63,14 @@ def _declared(app, definitions):
     return normalized
 
 
+def internal_parameters(definition):
+    from messaging.chatbot.doctype.ai_configuration.policy import RESERVED_KEYS
+
+    if any(row.parameter_key in RESERVED_KEYS for row in definition.parameters):
+        frappe.throw(_('Provider parameters cannot use a reserved contract name.'))
+    return [asdict(row) for row in definition.parameters]
+
+
 def internal_provider(provider_id, app=None):
     """Resolve operations from verified installed declarations, never from document paths."""
     matches = [definition for owner in ([app] if app in installed_applications() else [] if app else installed_applications())
@@ -69,21 +78,32 @@ def internal_provider(provider_id, app=None):
         if type(definition) is AIProvider and definition.app == owner
         and definition.provider_id == provider_id and (app is None or owner == app)]
     if len(matches) != 1:
-        raise AIServiceError('configuration_incomplete')
+        raise AIServiceError('provider_unavailable')
+    internal_parameters(matches[0])
     return matches[0]
 
 
 def retire_providers(app, identifiers):
-    """Invalidate profiles of missing or invalid declarations, preserving providers."""
+    from messaging.chatbot.doctype.ai_provider.ai_provider import retire_internal_providers
+    return retire_internal_providers(app, identifiers)
+
+
+def retire_uninstalled_providers():
+    owners = frappe.get_all('AI Provider', filters={'provider_type': 'Internal', 'status': 'Enabled'},
+        pluck='application', distinct=True)
+    for app in sorted({owner for owner in owners if owner} - set(installed_applications())):
+        retire_providers(app, set())
+
+
+def after_app_uninstall(app):
     from messaging.security.permissions import require_system_manager
     require_system_manager()
-    from messaging.chatbot.doctype.ai_configuration.ai_configuration import invalidate_provider_configurations
-    unavailable = []
-    for name in frappe.get_all('AI Provider', filters={'application': app, 'provider_type': 'Internal'}, pluck='name'):
-        if name not in identifiers:
-            unavailable.append(name)
-            invalidate_provider_configurations(name)
-    return unavailable
+    if app in installed_applications() or not frappe.db.table_exists('AI Provider'):
+        return
+    if frappe.db.exists('AI Provider', {'application': app, 'provider_type': 'Internal', 'status': 'Enabled'}):
+        retire_providers(app, set())
+        # Frappe's uninstall CLI has already committed its application removal.
+        frappe.db.commit()
 
 
 def validate_registration_schema(app, definitions):

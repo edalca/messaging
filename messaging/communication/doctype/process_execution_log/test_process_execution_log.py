@@ -222,7 +222,7 @@ class TestProcessMessageScope(unittest.TestCase):
             original.clear()
             frappe.response.pop('_server_messages', None)
 
-"""Candidate configuration, session and Redis regressions for registered Processes."""
+"""Administrative approval and evidence regressions for registered Processes."""
 import unittest
 from unittest.mock import patch
 
@@ -233,57 +233,50 @@ from messaging.communication.doctype.process_definition.test_process_definition 
 
 
 class TestProcessPrevalidation(ProcessFixtures, unittest.TestCase):
-    def test_native_descriptor_hides_reserved_context_and_discards_browser_paths(self):
+    def test_native_projection_ignores_untrusted_process_path(self):
+        from messaging.chatbot.doctype.bot_flow.contract import discover
         flow = self.flow()
         payload = dict(flow.as_dict(), process_method='frappe.untrusted.client')
-        descriptor = testing.describe(payload)
-        self.assertIsNone(descriptor['configuration_error'])
-        self.assertFalse({'context', 'language', 'test'} & {f['fieldname'] for f in descriptor['fields']})
-        candidate = testing._configuration(payload)
-        testing._validate_candidate(candidate)
-        reconstructed = testing._configuration(candidate.as_dict())
-        testing._validate_candidate(reconstructed)
-        self.assertEqual(candidate.process_method, reconstructed.process_method)
-        self.assertNotEqual(candidate.process_method, 'frappe.untrusted.client')
+        projection = discover(payload)
+        self.assertEqual(projection["process_method"], flow.process_method)
+        self.assertFalse({"context", "language", "test"}.intersection(projection))
 
-    def test_changed_revision_and_missing_session_reject_promotion(self):
+    def test_changed_revision_and_guest_reject_validation(self):
         from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
+
         flow = self.flow()
-        self.assertEqual(self.approve(flow)['status'], 'Passed')
+        flow.insert()
         candidate = flow.as_dict()
         flow.workflow_name = 'Changed display name'
         flow.save()
         with self.assertRaises(frappe.TimestampMismatchError):
             validate_process(candidate)
-        with self.assertRaises(frappe.PermissionError):
-            testing.test_method(flow.as_dict(), {})
         frappe.set_user('Guest')
         with self.assertRaises(frappe.PermissionError):
             validate_process(flow.as_dict())
 
     def test_endpoint_methods_roles_and_document_permissions(self):
+        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process, set_active
+
         flow = self.flow()
-        self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[testing.test_method], ['POST'])
-        self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[testing.describe], ['POST'])
+        flow.insert()
+        self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[validate_process], ['POST'])
+        self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[set_active], ['POST'])
         with patch('frappe.model.document.Document.check_permission', side_effect=frappe.PermissionError):
             with self.assertRaises(frappe.PermissionError):
-                testing.test_method(flow.as_dict(), {})
-        frappe.set_user('Guest')
-        with self.assertRaises(frappe.PermissionError):
-            testing.describe(flow.as_dict())
+                validate_process(flow.as_dict())
 
-    def test_failed_retest_preserves_legitimate_persistent_receipt(self):
-        from messaging.chatbot.doctype.bot_flow.bot_flow import _lifecycle_write
+    def test_current_receipt_is_not_retested(self):
+        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
+
         flow = self.flow()
         self.assertEqual(self.approve(flow)['status'], 'Passed')
         old = frappe.get_doc(flow.doctype, flow.name).as_dict()
-        with _lifecycle_write(), patch(
-            'messaging.communication.doctype.process_definition.execution.verify_loaded_method',
-            side_effect=frappe.ValidationError('Process code changed. Reload the application process before testing.'),
-        ):
-            self.assertEqual(testing.test_method(flow.as_dict(), {})['status'], 'Failed')
+        with patch.object(testing, 'run_test') as run_test:
+            with self.assertRaises(frappe.ValidationError):
+                validate_process(flow.as_dict())
+        run_test.assert_not_called()
         self.assertEqual(frappe.get_doc(flow.doctype, flow.name).as_dict(), old)
-        self.assertEqual(testing.test_state(frappe.get_doc(flow.doctype, flow.name)), 'Passed')
 
     def test_readable_series_and_legacy_coexistence(self):
         from messaging.communication.doctype.process_execution_log.process_execution_log import record_process_execution_log

@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 import frappe
 from messaging.registry import _catalog
-from messaging.registrations import ai_providers as wire
+from messaging.registry import ai_providers as wire
 from messaging.registry.ai_providers import internal_provider
 
 

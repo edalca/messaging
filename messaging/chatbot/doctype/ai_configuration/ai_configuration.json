@@ -1,17 +1,23 @@
 {
+ "actions": [],
+ "autoname": "field:configuration_name",
+ "creation": "2026-11-19 19:10:37.136485",
  "doctype": "DocType",
- "name": "AI Configuration",
- "module": "Chatbot",
  "engine": "InnoDB",
  "field_order": [
   "configuration_name",
   "profile_type",
   "provider",
-  "enabled",
+  "status",
   "column_break_profile",
   "validation_status",
   "last_checked",
   "diagnostic",
+  "decision_policy_section",
+  "minimum_confidence",
+  "negation_probability",
+  "column_break_lwrm",
+  "intent_probability",
   "parameters_section",
   "parameter_controls",
   "parameters",
@@ -19,6 +25,7 @@
   "attempted_hash",
   "evaluation_generation",
   "evaluation_basis",
+  "evaluation_compatibility",
   "evaluation_section",
   "evaluation_panel"
  ],
@@ -26,36 +33,39 @@
   {
    "fieldname": "configuration_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Configuration Name",
    "reqd": 1,
-   "unique": 1,
-   "in_list_view": 1
+   "unique": 1
   },
   {
+   "default": "Decision",
+   "description": "Parameter Extraction profiles are configuration only. No extraction executor is available.",
    "fieldname": "profile_type",
    "fieldtype": "Select",
-   "label": "Profile Purpose",
-   "options": "Decision\nParameter Extraction",
-   "default": "Decision",
-   "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "description": "Parameter Extraction profiles are configuration only. No extraction executor is available."
+   "label": "Profile Purpose",
+   "options": "Decision\nParameter Extraction",
+   "reqd": 1
   },
   {
    "fieldname": "provider",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Provider",
    "options": "AI Provider",
-   "reqd": 1,
-   "in_list_view": 1
+   "reqd": 1
   },
   {
-   "fieldname": "enabled",
-   "fieldtype": "Check",
-   "label": "Enabled",
-   "default": "0",
-   "in_list_view": 1
+   "default": "Untested",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Untested\nEnabled\nDisabled\nUnavailable",
+   "read_only": 1
   },
   {
    "fieldname": "parameter_controls",
@@ -65,16 +75,16 @@
   {
    "fieldname": "parameters",
    "fieldtype": "Table",
+   "hidden": 1,
    "label": "Parameters",
-   "options": "AI Configuration Value",
-   "hidden": 1
+   "options": "AI Configuration Value"
   },
   {
    "fieldname": "validation_status",
    "fieldtype": "Data",
-   "label": "Validation Status",
-   "read_only": 1,
-   "in_list_view": 1
+   "hidden": 1,
+   "label": "Diagnostic Code",
+   "read_only": 1
   },
   {
    "fieldname": "last_checked",
@@ -91,30 +101,37 @@
   {
    "fieldname": "validated_hash",
    "fieldtype": "Data",
+   "hidden": 1,
    "label": "Validated Hash",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
   },
   {
    "fieldname": "attempted_hash",
    "fieldtype": "Data",
+   "hidden": 1,
    "label": "Attempted Hash",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
   },
   {
    "fieldname": "evaluation_generation",
    "fieldtype": "Data",
+   "hidden": 1,
    "label": "Evaluation Generation",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
   },
   {
    "fieldname": "evaluation_basis",
    "fieldtype": "Data",
+   "hidden": 1,
    "label": "Evaluation Basis",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
+  },
+  {
+   "fieldname": "evaluation_compatibility",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Evaluation Compatibility Evidence",
+   "read_only": 1
   },
   {
    "fieldname": "evaluation_panel",
@@ -127,29 +144,64 @@
    "fieldtype": "Column Break"
   },
   {
+   "fieldname": "decision_policy_section",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "Decision Acceptance"
+  },
+  {
+   "fieldname": "minimum_confidence",
+   "fieldtype": "Float",
+   "label": "Minimum Confidence",
+   "precision": "6"
+  },
+  {
+   "fieldname": "intent_probability",
+   "fieldtype": "Float",
+   "label": "Intent Probability",
+   "precision": "6"
+  },
+  {
+   "fieldname": "negation_probability",
+   "fieldtype": "Float",
+   "label": "Negation Probability",
+   "precision": "6"
+  },
+  {
    "fieldname": "parameters_section",
    "fieldtype": "Section Break",
    "label": "Provider Parameters"
   },
   {
+   "depends_on": "eval:!doc.__islocal && doc.profile_type === 'Decision'",
    "fieldname": "evaluation_section",
    "fieldtype": "Section Break",
-   "label": "Functional Evaluation",
-   "depends_on": "eval:!doc.__islocal && doc.profile_type === 'Decision'"
+   "label": "Functional Evaluation"
+  },
+  {
+   "fieldname": "column_break_lwrm",
+   "fieldtype": "Column Break"
   }
  ],
+ "links": [],
+ "modified": "2026-11-19 19:36:33.324828",
+ "modified_by": "Administrator",
+ "module": "Chatbot",
+ "name": "AI Configuration",
+ "owner": "Administrator",
  "permissions": [
   {
-   "role": "System Manager",
-   "read": 1,
-   "write": 1,
    "create": 1,
    "delete": 1,
-   "select": 1
+   "read": 1,
+   "role": "System Manager",
+   "select": 1,
+   "write": 1
   }
  ],
- "track_changes": 0,
- "allow_rename": 0,
- "autoname": "field:configuration_name",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
  "title_field": "configuration_name"
 }

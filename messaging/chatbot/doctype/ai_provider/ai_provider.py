@@ -5,24 +5,28 @@ Desk and ordinary RPC can create External providers and cannot appoint an owner.
 """
 import math
 import re
-from contextlib import nullcontext
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from messaging.chatbot.doctype.ai_configuration.policy import RESERVED_KEYS
 from messaging.common.configuration import normalize
 from messaging.common.write_guards import InternalWriteGuard
 from messaging.security.permissions import require_system_manager
 
 provider_sync = InternalWriteGuard('messaging_ai_provider_sync')
+provider_status_write = InternalWriteGuard('messaging_ai_provider_status')
 from .parameters import TYPES, PROVIDER_ID, validate_scalar, validate_parameter_schema
 ORIGINS = ('Internal', 'External')
-REST_TRANSPORT_KEYS = frozenset(('endpoint', 'auth_type', 'username', 'auth_secret', 'timeout', 'minimum_confidence'))
-RESERVED_REQUEST_KEYS = frozenset(('schema_version', 'request_id', 'message', 'language', 'context',
-    'available_flows', 'allowed_outcomes', 'greeting_available', 'provider_parameters', 'decision', 'parameters'))
+REST_TRANSPORT_KEYS = frozenset(('endpoint', 'auth_type', 'username', 'auth_secret', 'timeout'))
+RESERVED_REQUEST_KEYS = RESERVED_KEYS | frozenset(('schema_version', 'wire_version', 'request_id', 'message',
+    'language', 'context', 'available_flows', 'allowed_outcomes', 'greeting_available',
+    'human_attention_available', 'provider_parameters', 'decision', 'results', 'parameters'))
 DEFINITION_FIELDS = ('parameter_key', 'label', 'description', 'field_type', 'required', 'default_value',
     'options', 'minimum', 'maximum', 'max_length', 'sort_order')
+REST_ENDPOINT_LABEL = 'REST Service URL'
+REST_ENDPOINT_DESCRIPTION = 'HTTPS URL required for connection checks, evaluation, and use. Drafts can be saved without it.'
 
 
 def parameter(key, label, kind='Data', default=None, required=0, **kwargs):
@@ -31,12 +35,11 @@ def parameter(key, label, kind='Data', default=None, required=0, **kwargs):
 
 
 def adapter_parameters(kind="rest"):
-    common = [parameter('timeout', 'Timeout (seconds)', 'Int', '10', 1, minimum=1, maximum=60),
-        parameter('minimum_confidence', 'Minimum Confidence', 'Float', '0.60', 1, minimum=0.500001, maximum=1)]
     if kind == 'rest':
-        return common + [parameter('endpoint', 'REST Endpoint', required=1),
+        return [parameter('endpoint', REST_ENDPOINT_LABEL, required=1, description=REST_ENDPOINT_DESCRIPTION),
             parameter('auth_type', 'Authentication', 'Select', 'None', 1, options='None\nBearer\nBasic'),
-            parameter('username', 'Username'), parameter('auth_secret', 'Credential', 'Password')]
+            parameter('username', 'Username'), parameter('auth_secret', 'Credential', 'Password'),
+            parameter('timeout', 'Timeout (seconds)', 'Int', '10', 1, minimum=1, maximum=60)]
     frappe.throw(_('Invalid REST provider parameter schema.'))
 
 
@@ -50,18 +53,29 @@ def _reject_ordinary_internal(name):
 
 
 class AIProvider(Document):
+    def db_set(self, fieldname, *args, **kwargs):
+        if 'status' in ([fieldname] if isinstance(fieldname, str) else fieldname):
+            frappe.throw(_('Use the available actions to change Status.'), frappe.PermissionError)
+        return super().db_set(fieldname, *args, **kwargs)
+
     def before_validate(self):
         require_system_manager()
         if provider_sync.active():
             return
+        old = self.get_doc_before_save()
+        if not provider_status_write.active() and (self.status or 'Disabled') != (old.status if old else 'Disabled'):
+            frappe.throw(_('Use the available actions to change Status.'), frappe.PermissionError)
+        if self.is_new():
+            self.status = 'Disabled'
         if self.is_new():
             # An ordinary document cannot claim internal origin or application ownership.
             if self.provider_type not in (None, '', 'External') or not _blank(self.application):
                 frappe.throw(_('Internal AI providers are registered by their owning application.'), frappe.PermissionError)
             self.provider_type = 'External'
             self.application = None
-            if not self.parameters:
-                for row in adapter_parameters('rest'):
+            provided = {row.parameter_key for row in self.parameters}
+            for row in adapter_parameters('rest'):
+                if row['parameter_key'] not in provided:
                     self.append('parameters', row)
             return
         persisted = frappe.db.get_value(self.doctype, self.name,
@@ -87,6 +101,9 @@ class AIProvider(Document):
             frappe.throw(_('Select at least one AI provider capability.'))
         if self.provider_type not in ORIGINS:
             frappe.throw(_('Invalid AI Provider origin.'))
+        allowed = ('Enabled', 'Unavailable') if self.provider_type == 'Internal' else ('Enabled', 'Disabled')
+        if self.status not in allowed:
+            frappe.throw(_('Invalid AI Provider status.'))
         if provider_sync.active():
             if (self.provider_type != 'Internal' or _blank(self.application)
                 or not isinstance(self.application, str)):
@@ -136,6 +153,10 @@ class AIProvider(Document):
         if self.provider_type == 'External':
             for row in self.parameters:
                 if row.parameter_key in REST_TRANSPORT_KEYS:
+                    if row.parameter_key == 'endpoint' and not _blank(row.default_value):
+                        frappe.throw(_('Set the REST service URL on each AI profile.'))
+                    if row.send_to_rest:
+                        frappe.throw(_('Connection parameters cannot be included in the REST request body.'))
                     continue
                 if row.field_type == 'Password':
                     frappe.throw(_('Additional secret parameters cannot be sent by the generic REST executor. Use the standard credential.'))
@@ -145,6 +166,8 @@ class AIProvider(Document):
         if old and not provider_sync.active():
             previous = {r.parameter_key: r for r in old.parameters}
             for key, row in previous.items():
+                if self.provider_type == 'External' and key in RESERVED_REQUEST_KEYS and key not in actual:
+                    continue
                 if key not in actual or actual[key].field_type != row.field_type:
                     frappe.throw(_('Existing provider parameter keys and types are immutable.'))
 
@@ -179,7 +202,7 @@ def _parameter_snapshot(rows):
 
 
 def _snapshot(doc):
-    return (doc.provider_name, doc.description or '', int(doc.enabled or 0), doc.schema_version, int(doc.decision), int(doc.parameter_extraction),
+    return (doc.provider_name, doc.description or '', doc.schema_version, int(doc.decision), int(doc.parameter_extraction),
         doc.application or None, doc.provider_type, _parameter_snapshot(doc.parameters))
 
 
@@ -208,17 +231,19 @@ def _sync_ai_providers(*, app, definitions):
                 if exists and doc.application != app:
                     frappe.throw(_('AI Provider identity and implementation are immutable.'))
                 desired = frappe._dict(values)
-                if exists:
-                    # The declaration supplies the initial state only.
-                    desired.enabled = doc.enabled
+                desired.status = 'Enabled'
                 if exists and _snapshot(doc) == _snapshot(desired):
-                    summary['unchanged'] += 1
+                    if doc.status == 'Enabled':
+                        summary['unchanged'] += 1
+                    else:
+                        _set_internal_status(doc, 'Enabled')
+                        summary['updated'] += 1
                     continue
                 if not exists:
                     doc.provider_id = provider_id
                 previous = {row.parameter_key: row.name for row in doc.parameters}
                 doc.update({key: desired[key] if key != 'parameters' else [] for key in (
-                    'provider_name', 'description', 'enabled', 'schema_version', 'decision', 'parameter_extraction', 'application',
+                    'provider_name', 'description', 'status', 'schema_version', 'decision', 'parameter_extraction', 'application',
                     'provider_type', 'parameters')})
                 for item in values['parameters']:
                     row = doc.append('parameters', item)
@@ -232,20 +257,44 @@ def _sync_ai_providers(*, app, definitions):
     return summary
 
 
+def _set_internal_status(doc, status):
+    doc.load_doc_before_save()
+    frappe.db.set_value(doc.doctype, doc.name, 'status', status)
+    doc.status = status
+    doc.run_method('on_update')
+
+
+def retire_internal_providers(app, identifiers):
+    """Withdraw missing declarations and notify dependent profiles in the same transaction."""
+    require_system_manager()
+    frappe.db.get_value('DocType', 'AI Provider', 'name', for_update=True)
+    retired = []
+    for name in frappe.get_all('AI Provider',
+            filters={'application': app, 'provider_type': 'Internal'}, pluck='name', order_by='name'):
+        if name in identifiers:
+            continue
+        retired.append(name)
+        doc = frappe.get_doc('AI Provider', name, for_update=True)
+        if doc.status != 'Unavailable':
+            _set_internal_status(doc, 'Unavailable')
+    return retired
+
+
 @frappe.whitelist(methods=['POST'])
 def set_provider_enabled(provider, enabled):
-    """Administrative enablement is independent of profile credentials and approval."""
+    """An administrator manages availability only for external REST providers."""
     require_system_manager()
     doc = frappe.get_doc('AI Provider', provider, for_update=True)
     doc.check_permission('write')
+    _reject_ordinary_internal(doc.name)
     if type(enabled) not in (bool, int, str) or enabled not in (True, False, '0', '1'):
         frappe.throw(_('Provider enabled must be a boolean value.'))
-    value = int(enabled in (True, '1'))
-    if value != doc.enabled:
-        with provider_sync() if doc.provider_type == 'Internal' else nullcontext():
-            doc.enabled = value
+    status = 'Enabled' if enabled in (True, '1') else 'Disabled'
+    if status != doc.status:
+        with provider_status_write():
+            doc.status = status
             doc.save()
-    return dict(provider=doc.name, enabled=bool(value))
+    return dict(provider=doc.name, enabled=status == 'Enabled', status=status)
 
 
 @frappe.whitelist()
@@ -253,4 +302,9 @@ def parameter_schema(provider):
     require_system_manager()
     doc = frappe.get_doc('AI Provider', provider)
     doc.check_permission('read')
-    return dict(parameters=[{key: row.get(key) for key in DEFINITION_FIELDS} for row in doc.parameters])
+    parameters = [{key: row.get(key) for key in DEFINITION_FIELDS} for row in doc.parameters]
+    if doc.provider_type == 'External':
+        for row in parameters:
+            if row['parameter_key'] == 'endpoint':
+                row.update(label=REST_ENDPOINT_LABEL, description=REST_ENDPOINT_DESCRIPTION, default_value=None)
+    return dict(parameters=parameters)

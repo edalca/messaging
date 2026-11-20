@@ -17,6 +17,7 @@ from frappe.utils import get_datetime, now_datetime
 
 from messaging.chatbot.doctype.bot_settings.language import presentation_language
 from messaging.communication.doctype.notification_queue.notification_queue import internal_write
+from messaging.communication.doctype.process_definition import approval
 from messaging.communication.doctype.communication_channel_account.binding import resolve_binding
 from messaging.security.execution_context import automatic_job, is_automation
 from messaging.common.locking import contact_lock
@@ -44,7 +45,7 @@ def envelope(name):
 	doc = frappe.get_doc('Notification Queue', name)
 	return dict(source_type='Notification Queue', notification=doc.name, provider=doc.provider,
 		channel=doc.channel, account=doc.account, account_id=doc.account_id, destination=doc.effective_recipient,
-		recipient=doc.recipient, emulator_contact=doc.emulator_contact,
+		recipient=doc.recipient, emulator_contact=doc.emulator_contact, delivery_mode=doc.delivery_mode,
 		outbound_id=doc.occurrence_key, message_type='Notification', content_type='Template' if doc.content_type == 'Provider Template' else 'Text',
 		output_mode=doc.content_type, template_revision=doc.template_revision or '',
 		provider_template_reference=doc.get('provider_template_reference') or '',
@@ -71,28 +72,31 @@ def defer(doc, code, now):
 
 def revalidate(doc):
 	"""Recheck the original event; changed data never rewrites the immutable snapshot."""
+	rule = approval.lock_execution("Notification Rule", doc.notification_rule)
+	if not approval.is_current(rule):
+		return "rule_approval_obsolete"
+
 	from messaging.communication.doctype.communication_template.status import notification_template_gate
 	if doc.template_reference:
 		variables = None if doc.content_type == 'Provider Template' else json.loads(doc.variables_json or '{}')
-		blocked = notification_template_gate(doc.template_reference, doc.account, variables=variables)
+		blocked = notification_template_gate(doc.template_reference, doc.account, variables=variables,
+			expected_revision=doc.template_revision or '', live=True)
 		if blocked:
 			return blocked
-	from messaging.communication.doctype.notification_rule.notification_rule import notification_destination, delivery_fingerprint, validate_rule
+	from messaging.communication.doctype.notification_rule.notification_rule import notification_destination, delivery_fingerprint
 	from messaging.communication.doctype.notification_rule.contract import prepared_data
 	from messaging.communication.doctype.process_definition.execution import execute_process
-	rule = frappe.get_doc('Notification Rule', doc.notification_rule)
 	account = frappe.get_doc('Communication Channel Account', doc.account)
 	try:
-		destination = notification_destination(rule, account, doc.recipient)
+		destination = notification_destination(rule, account, doc.recipient or '')
 	except frappe.ValidationError:
 		return 'recipient_configuration_invalid'
+	if destination is None:
+		return 'recipient_missing'
 	if (rule.account != doc.account or not doc.delivery_fingerprint
 		or destination != dict(effective_recipient=doc.effective_recipient, emulator_contact=doc.emulator_contact, delivery_mode=doc.delivery_mode)
 		or delivery_fingerprint(rule, destination) != doc.delivery_fingerprint):
 		return 'delivery_configuration_changed'
-	if rule.test_state() != 'Passed':
-		return 'rule_approval_obsolete'
-	validate_rule(rule)
 	if not frappe.db.exists(doc.source_doctype, doc.source_name):
 		return 'source_unavailable'
 	source = frappe.get_doc(doc.source_doctype, doc.source_name)
@@ -116,7 +120,11 @@ def revalidate(doc):
 	if prepared.get('data') is None:
 		return 'event_no_longer_eligible'
 	fresh = dict(prepared['data'], variables_json=json.loads(prepared['data']['variables_json']))
-	if fresh != dict(recipient=doc.recipient, prepared_text=doc.prepared_text or '', variables_json=json.loads(doc.variables_json or '{}'), template_revision=doc.template_revision or ''):
+	stored = dict(recipient=doc.recipient or '', prepared_text=doc.prepared_text or '',
+		variables_json=json.loads(doc.variables_json or '{}'), template_revision=doc.template_revision or '')
+	if doc.template_contract_json:
+		stored['template_contract_json'] = doc.template_contract_json
+	if fresh != stored:
 		return 'business_snapshot_changed'
 	return None
 
@@ -159,7 +167,12 @@ def deliver(name, *, now=None):
 			doc.status, doc.diagnostic_code = 'Cancelled', 'process_unavailable'
 			save(doc); frappe.db.commit()
 			return result(doc)
-		if not frappe.db.get_value('Notification Rule', doc.notification_rule, 'enabled'):
+		rule_status = frappe.db.get_value('Notification Rule', doc.notification_rule, 'status')
+		if rule_status == 'Unavailable':
+			doc.status, doc.diagnostic_code = 'Cancelled', 'rule_approval_obsolete'
+			save(doc); frappe.db.commit()
+			return result(doc)
+		if rule_status != 'Enabled':
 			return defer(doc, 'rule_disabled', now)
 		account = frappe.db.get_value('Communication Channel Account', doc.account, ['channel', 'account_id'], as_dict=True)
 		provider = frappe.db.get_value('Communication Channel', doc.channel, 'provider')
@@ -172,6 +185,9 @@ def deliver(name, *, now=None):
 		except Exception:
 			frappe.db.rollback()
 			return defer(doc, 'account_unavailable', now)
+		from messaging.communication.doctype.communication_template.external import delivery_lock, managed
+		if managed(definition) and (doc.content_type != 'Provider Template' or not doc.template_contract_json):
+			return defer(doc, 'template_status_unknown', now)
 		capability = 'provider_templates' if doc.content_type == 'Provider Template' else 'text'
 		if capability not in definition['capabilities'] or 'validate_notification' not in definition['operations']:
 			doc.status, doc.diagnostic_code = 'Cancelled', 'content_unsupported'
@@ -181,8 +197,19 @@ def deliver(name, *, now=None):
 		blocker = next((reason for key in sorted(keys) if (reason := notification_blocker(key, utc_now))), None)
 		if blocker:
 			return defer(doc, blocker, now)
+		if managed(definition):
+			try:
+				acquired = locks.enter_context(delivery_lock(definition, doc.channel, doc.account))
+			except Exception:
+				return defer(doc, 'template_status_unknown', now)
+			if not acquired:
+				return defer(doc, 'template_sync_in_progress', now)
+			frappe.db.rollback()
 		try:
 			reason = revalidate(doc)
+		except frappe.PermissionError:
+			frappe.db.rollback()
+			return defer(doc, 'rule_disabled', now)
 		except Exception:
 			frappe.db.rollback()
 			reason = 'delivery_revalidation_failed'
@@ -192,13 +219,14 @@ def deliver(name, *, now=None):
 			doc.status, doc.diagnostic_code = 'Cancelled', reason
 			save(doc); frappe.db.commit()
 			return result(doc)
+		expected_approval = frappe.db.get_value("Notification Rule", doc.notification_rule, "approval_hash")
 		payload = envelope(doc.name)
 		if doc.content_type == 'Provider Template':
 			try:
 				from messaging.communication.doctype.communication_template.communication_template import provider_template_contract
 				contract = provider_template_contract(doc.account, doc.provider_template_reference)
 				if contract['revision'] != doc.template_revision:
-					raise frappe.ValidationError
+					return defer(doc, 'template_unavailable', now)
 				mapped = operation(definition, 'prepare_provider_template', payload)
 				if not isinstance(mapped, dict) or len(json.dumps(mapped, allow_nan=False).encode()) > 65536:
 					raise frappe.ValidationError
@@ -223,6 +251,18 @@ def deliver(name, *, now=None):
 		save(doc)
 		frappe.publish_realtime('messaging_conversation_update', dict(channel=doc.channel, account=doc.account), after_commit=True)
 		frappe.db.commit()
+		# Invalidation may win the race at the commit boundary. Hold the current
+		# Rule lock through transport, and cancel safely if no handoff was made.
+		try:
+			rule = approval.lock_execution("Notification Rule", doc.notification_rule)
+		except frappe.PermissionError:
+			rule = None
+		if rule is None or rule.approval_hash != expected_approval:
+			doc.handoff_at = None
+			doc.status, doc.diagnostic_code = "Cancelled", "rule_approval_obsolete"
+			save(doc)
+			frappe.db.commit()
+			return result(doc)
 		response = handoff(definition, payload)
 		doc.reload()
 		return _reconcile(doc, response)

@@ -18,7 +18,7 @@ frappe.provide('messaging.notification_conditions');
             fieldtype: ['Email', 'Phone', 'URL'].includes(kind) ? 'Data' : kind,
             options: kind === 'Data' ? field?.options : ['Email', 'Phone', 'URL'].includes(kind) ? kind : field?.options,
             length: field?.length, precision: field?.precision,
-            read_only: !frm.is_new() || !field || !frm.perm?.[0]?.write,
+            read_only: (!frm.is_new() && frm.doc.status === 'Enabled') || !field || !frm.perm?.[0]?.write,
             change: () => { if (!control._condition_loading) return store(row, control); }
         };
         parent.empty();
@@ -64,19 +64,11 @@ frappe.provide('messaging.notification_conditions');
         }
         const validation = gridRow.columns.validation_status;
         if (validation) {
-            const label = row.validation_status || __('Not validated');
-            validation.static_area.empty();
-            const button = $('<button type="button" class="btn btn-link btn-xs">').text(label)
-                .attr('title', __('Validate this condition using a real source document'))
-                .appendTo(validation.static_area);
-            button.on('click', async event => {
-                event.preventDefault(); event.stopPropagation();
-                await frappe.require('/assets/messaging/js/process_test.js');
-                return messaging.process_test.validate_condition(frm, row);
-            });
+            const approved = ['Disabled', 'Enabled'].includes(frm.doc.status) && frm.doc.approval_hash;
+            validation.static_area.text(approved ? __('Validated') : __('Not validated'));
         }
         const valueColumn = gridRow.columns.value;
-        const signature = JSON.stringify(definition(frm, row) || null);
+        const signature = JSON.stringify([definition(frm, row) || null, frm.doc.status === 'Enabled']);
         if (valueColumn?.field && valueColumn.field._condition_signature !== signature) {
             valueColumn.field.$wrapper.remove();
             delete valueColumn.field;
@@ -98,7 +90,7 @@ frappe.provide('messaging.notification_conditions');
     api.flush = async frm => {
         for (const row of frm.fields_dict.events.grid.grid_rows) {
             const control = row.grid_form?.wrapper.is(':visible') ? row.grid_form.fields_dict.value : row.columns.value?.field;
-            if (frm.is_new() && control?._condition_row && definition(frm, row.doc)) {
+            if ((frm.is_new() || frm.doc.status !== 'Enabled') && control?._condition_row && definition(frm, row.doc)) {
                 await control.parse_validate_and_set_in_model(control.get_input_value());
                 await store(row.doc, control);
             }
@@ -244,7 +236,10 @@ frappe.provide('messaging.notification_parameters');
 frappe.ui.form.on('Notification Rule', {
     setup(frm) {
         frm.set_query('process_definition', () => ({filters: {process_type: 'notification', status: 'Enabled'}}));
-        frm.set_query('template_reference', 'outputs', () => ({filters: {status: 'Active', channel: frm.doc.channel_context || ''}}));
+        frm.set_query('template_reference', 'outputs', () => ({
+            query: 'messaging.communication.doctype.communication_template.external.notification_template_query',
+            filters: {account: frm.doc.account},
+        }));
         frm.set_query('account', () => ({query: 'messaging.communication.doctype.notification_rule.notification_rule.account_query', filters: {channel: null}}));
         frm.set_query('source_doctype', () => ({filters: {
             module: ['in', frm.notification_modules || []], istable: 0, issingle: 0, is_virtual: 0,
@@ -257,9 +252,15 @@ frappe.ui.form.on('Notification Rule', {
         await frappe.require('/assets/messaging/js/process_test.js');
         await refresh_notification_rule(frm);
         lock_rule_structure(frm);
-        await refresh_rule_lifecycle(frm);
+        messaging.process_approval.refresh(frm, 'messaging.communication.doctype.notification_rule.notification_rule.');
     },
-    redirect_recipient: refresh_notification_rule,
+    async redirect_recipient(frm) {
+        if (frm.notification_loading) return;
+        if (!frm.doc.redirect_recipient && !frm.notification_redirect_required && (frm.doc.parameters || []).length) {
+            frm.clear_table('parameters');
+        }
+        await refresh_notification_rule(frm);
+    },
     async validate(frm) {
         await messaging.notification_conditions.flush(frm);
         await messaging.notification_parameters.flush(frm);
@@ -304,130 +305,16 @@ frappe.ui.form.on('Notification Rule Event', {
 });
 function lock_rule_structure(frm) {
     const locked = !frm.is_new();
+    const eventsLocked = locked && frm.doc.status === 'Enabled';
     frm.set_df_property('account', 'read_only', locked && !!frm.doc.__onload?.account_bound);
-    frm.set_df_property('redirect_recipient', 'read_only', locked && !!frm.doc.__onload?.account_bound);
-    frm.set_df_property('enabled', 'read_only', 1);
-    for (const field of ['rule_name', 'source_application', 'source_doctype',
-        'events']) frm.set_df_property(field, 'read_only', locked);
+    for (const field of ['source_application', 'source_doctype']) frm.set_df_property(field, 'read_only', locked);
+    frm.set_df_property('events', 'read_only', eventsLocked);
     const grid = frm.fields_dict.events.grid;
-    grid.cannot_add_rows = locked;
-    grid.cannot_delete_rows = locked;
-    for (const field of ['document_event', 'field_name', 'value']) grid.update_docfield_property(field, 'read_only', locked);
+    grid.cannot_add_rows = eventsLocked;
+    grid.cannot_delete_rows = eventsLocked;
+    for (const field of ['document_event', 'field_name', 'value']) grid.update_docfield_property(field, 'read_only', eventsLocked);
 }
 
-async function rule_lifecycle_call(method, args, load_document = false) {
-    const response = await $.ajax({url: '/api/method/' + method, type: 'POST',
-        data: Object.fromEntries(Object.entries(args).map(([key, value]) =>
-            [key, typeof value === 'object' ? JSON.stringify(value) : value])),
-        dataType: 'json', headers: {'X-Frappe-CSRF-Token': frappe.csrf_token}, timeout: 30000});
-    if (!response || response.exc || response.exception ||
-        (load_document ? !Array.isArray(response.docs) : !response.message)) throw response;
-    return load_document ? response : response.message;
-}
-
-function show_rule_lifecycle_state(frm, state) {
-    if (!['Untested', 'Disabled', 'Enabled', 'Unavailable'].includes(state)) return;
-    frm.page.set_indicator(__(state, null, 'Notification Rule'),
-        state === 'Enabled' ? 'green' : state === 'Disabled' ? 'gray' : 'orange');
-}
-
-async function refresh_rule_lifecycle(frm) {
-    const owner = 'messaging.communication.doctype.notification_rule.notification_rule.';
-    const request = Symbol('rule_lifecycle');
-    frm.rule_lifecycle_request = request;
-    frm.rule_lifecycle_button?.remove();
-    if (frm.rule_lifecycle_label) {
-        frm.page.menu.find(`[data-label="${encodeURIComponent(frm.rule_lifecycle_label)}"]`).closest('li').remove();
-    }
-    frm.rule_lifecycle_button = null;
-    frm.page.set_primary_action(__('Save'), () => frm.save(), 'save');
-    frm.page.btn_primary?.prop('disabled', !frm.is_dirty() || frm.rule_lifecycle_operation?.doc === frm.doc);
-    if (frm.is_new() || !frappe.user.has_role('System Manager')) return;
-    const name = frm.doc.name;
-    const doc = frm.doc;
-    const route = frappe.get_route_str();
-    const current = () => frm.doc === doc && frappe.get_route_str() === route;
-    let message;
-    try {
-        message = doc.__onload?.rule_lifecycle || await rule_lifecycle_call(owner + 'state', {name});
-        // Reuse the state supplied with this document load.
-        if (!current() || frm.rule_lifecycle_request !== request) return;
-        show_rule_lifecycle_state(frm, message.lifecycle_status);
-        if (message.verification_error) frm.set_intro(message.verification_error, 'orange');
-    } catch (error) {
-        return;
-    }
-    if (frm.doc.name !== name || frm.rule_lifecycle_request !== request) return;
-    const state = message.lifecycle_status;
-    if (state === 'Unavailable') return;
-    const label = state === 'Untested' ? __('Validate') : state === 'Disabled' ? __('Activate') : __('Deactivate');
-    const act = async () => {
-        if (!current() || frm.rule_lifecycle_operation?.doc === doc) return;
-        if (frm.is_new() || frm.is_dirty()) {
-            frappe.msgprint(__('Save pending changes before validating or changing activation.'));
-            return;
-        }
-        const args = {candidate: frm.doc};
-        if (state !== 'Untested') args.active = state === 'Disabled' ? 1 : 0;
-        const operation = {name, doc};
-        frm.rule_lifecycle_operation = operation;
-        const modified = frm.doc.modified;
-        frm.rule_lifecycle_button?.prop('disabled', true).attr('aria-busy', 'true')
-            .text(state === 'Untested' ? __('Validating...') : __('Updating state...'));
-        frm.page.btn_primary?.prop('disabled', true);
-        frm.set_intro(state === 'Untested' ? __('Validating...') : __('Updating state...'), 'blue');
-        try {
-            const result = await rule_lifecycle_call(
-                owner + (state === 'Untested' ? 'validate_process' : 'set_active'), args);
-            if (!current()) return;
-            if (frm.is_dirty() || frm.doc.modified !== modified) {
-                frappe.msgprint(__('The document changed during the operation. Reload it to check its current state.'));
-                return;
-            }
-            if (state === 'Untested' && !['Passed', 'Failed'].includes(result.status)) throw new Error('Invalid validation response');
-            if (result.status === 'Failed') {
-                frappe.msgprint({title: __('Notification Rule validation failed.'), indicator: 'red',
-                    message: frappe.utils.escape_html(result.execution_log
-                        ? __('The Process could not be validated. Review Process Execution Log {0} for the technical diagnosis.', [result.execution_log])
-                        : result.message || __('Notification Rule validation failed.'))});
-            }
-            const saved = await rule_lifecycle_call('frappe.desk.form.load.getdoc', {doctype: frm.doctype, name}, true);
-            if (!current()) return;
-            if (frm.is_dirty() || frm.doc.modified !== modified) {
-                frappe.msgprint(__('The document changed during the operation. Reload it to check its current state.'));
-                return;
-            }
-            if (!saved.docs.some(item => item.doctype === frm.doctype && item.name === name)) throw new Error('Invalid Notification Rule document');
-            frappe.model.remove_from_locals(frm.doctype, name);
-            frappe.model.sync(saved);
-            await frm.refresh(name);
-            if (frappe.get_route_str() !== route || frm.doc.name !== name) return;
-            if (state === 'Untested' && result.status === 'Passed' && frm.doc.enabled) {
-                frappe.msgprint({title: __('Rule validated'), indicator: 'green',
-                    message: __('The Rule was validated and enabled. Business logic was not executed.')});
-            }
-        } catch (error) {
-            frappe.msgprint({title: __('Error'), indicator: 'red', message: frappe.utils.escape_html(messaging.process_test.error_text(error))});
-        } finally {
-            if (frm.rule_lifecycle_operation === operation) {
-                frm.rule_lifecycle_operation = null;
-                if (frappe.get_route_str() === route && frm.doc.name === name) {
-                    frm.set_intro(frm.is_dirty() ? __('Save pending changes before validating or changing activation.') : '', 'orange');
-                    if (frm.doc === doc) await refresh_rule_lifecycle(frm);
-                }
-            }
-        }
-    };
-    frm.rule_lifecycle_label = label;
-    frm.rule_lifecycle_button = frm.page.add_button(label, act, {btn_class: 'btn-default'});
-    const dirty = () => {
-        frm.rule_lifecycle_button?.prop('disabled', frm.is_dirty() || frm.rule_lifecycle_operation?.doc === frm.doc);
-        if (frm.is_dirty()) frm.set_intro(__('Save pending changes before validating or changing activation.'), 'orange');
-        else frm.set_intro(message.verification_error || '', 'orange');
-    };
-    frm.$wrapper.off('dirty.rule_lifecycle').on('dirty.rule_lifecycle', dirty);
-    dirty();
-}
 async function refresh_notification_rule(frm) {
     const revision = frm.notification_revision = (frm.notification_revision || 0) + 1;
     const {message: data} = await frappe.call({
@@ -519,8 +406,6 @@ frappe.ui.form.on('Notification Rule', {
         $(frm.wrapper).on('grid-row-render.notification_process', (_event, row) => notification_process_row(frm, row));
     },
     async refresh(frm) {
-        await frappe.require('/assets/messaging/js/process_test.js');
-        await messaging.process_test.refresh(frm);
         const contract = JSON.parse(frm.doc.process_contract || '{}');
         const hasParams = Boolean(frm.doc.process_parameters?.length) || Boolean(contract.configurable_parameters);
         frm.toggle_display('section_break_parameters', hasParams);

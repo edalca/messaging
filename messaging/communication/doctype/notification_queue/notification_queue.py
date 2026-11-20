@@ -9,7 +9,7 @@ from frappe.model.document import Document
 internal_write = InternalWriteGuard('notification_internal_write')
 SNAPSHOT = ('notification_rule', 'source_application', 'source_doctype', 'source_name', 'document_event',
 	'condition_field', 'condition_value', 'occurrence', 'occurrence_key', 'execution_log', 'account', 'channel', 'provider', 'account_id',
-	'recipient', 'effective_recipient', 'emulator_contact', 'identity_key', 'content_type', 'template_reference', 'provider_template_reference', 'template_revision', 'variables_json', 'prepared_text',
+	'recipient', 'effective_recipient', 'emulator_contact', 'identity_key', 'content_type', 'template_reference', 'provider_template_reference', 'template_revision', 'template_contract_json', 'variables_json', 'prepared_text',
 	'event_at', 'scheduled_at', 'delivery_mode', 'delivery_fingerprint')
 TRANSITIONS = {
 	'Pending': {'Processing', 'Cancelled'}, 'Deferred': {'Processing', 'Cancelled'},

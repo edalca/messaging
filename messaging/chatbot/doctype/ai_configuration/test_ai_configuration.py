@@ -1,23 +1,25 @@
 """Focused provider, wire, privacy, network and administrative integrity contracts."""
 from messaging.chatbot.doctype.bot_settings.interpretation import build_request, normalize_response
+import base64
 import copy
+import io
 import json
 import multiprocessing
-import ssl
 import subprocess
-import tempfile
-import threading
 import time
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from contextlib import contextmanager
+from socket import AF_INET, SOCK_STREAM
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.utils.password import get_decrypted_password, set_encrypted_password
 
-from messaging.registrations import ai_providers as wire
-from messaging.chatbot.doctype.ai_configuration import execution as adapters
+from messaging.registry import ai_providers as wire
+from messaging.chatbot.doctype.ai_configuration import execution as adapters, rest_transport
+from messaging.registry.ai_providers.rest import DECISION_WIRE, EXTRACTION_WIRE
 from messaging.chatbot.doctype.ai_configuration import ai_configuration as config
 from messaging.chatbot.doctype.ai_provider import ai_provider as setup
 from messaging.chatbot.doctype.ai_provider.test_ai_provider import sync_ai_providers, synthetic_wire_response
@@ -25,17 +27,63 @@ from messaging.chatbot.doctype.bot_settings.interpretation import Decision, Inva
 from messaging.chatbot.doctype.bot_parameter.bot_parameter import recognize, captured_values
 
 
-def successful_probe(provider, values, request):
+JSON_HEADERS = {'Content-Type': 'application/json'}
+
+
+def rest_decision_body(request):
+    options = [row['ref'] for row in request['available_flows']]
+    options.extend(signal.value for signal in wire.DecisionSignal if request[signal.value + '_available'])
+    return dict(wire_version=DECISION_WIRE, schema_version=request['schema_version'], request_id=request['request_id'],
+        results=[dict(option_id=option, classification='absent') for option in options])
+
+
+@contextmanager
+def simulated_rest_http(reply, *, dns_error=None):
+    """Run the production transport worker in process with deterministic DNS and HTTPS."""
+    pool = MagicMock()
+
+    def post(_method, _path, *, body, headers, **_kwargs):
+        status, response_headers, content = reply(wire.strict_json(body), headers)
+        return rest_transport.urllib3.response.HTTPResponse(body=io.BytesIO(content), headers=response_headers,
+            status=status, preload_content=False)
+
+    pool.urlopen.side_effect = post
+
+    def child(command, *, input, **_settings):
+        if command[1:] != ['-m', rest_transport.__name__]:
+            raise AssertionError('Unexpected child process')
+        streams = SimpleNamespace(stdin=SimpleNamespace(buffer=io.BytesIO(input)),
+            stdout=SimpleNamespace(buffer=io.BytesIO()))
+        with patch.object(rest_transport, 'sys', streams):
+            rest_transport._worker()
+        return SimpleNamespace(stdout=streams.stdout.buffer.getvalue())
+
+    address = [(AF_INET, SOCK_STREAM, 6, '', ('93.184.215.14', 443))]
+    with (
+        patch.object(rest_transport.subprocess, 'run', side_effect=child),
+        patch.object(rest_transport.socket, 'getaddrinfo', return_value=address, side_effect=dns_error),
+        patch.object(rest_transport.urllib3, 'HTTPSConnectionPool', return_value=pool) as connect,
+    ):
+        yield connect, pool
+
+
+def successful_probe(provider, values, request, *, policy=None):
+    if provider.provider_type == 'Internal':
+        from messaging.chatbot.doctype.ai_provider.test_ai_provider import synthetic_interpret
+        return synthetic_interpret(request, values)
     return synthetic_wire_response(request, Decision(outcome='empty_catalog'), .99)
 
 
 def create_configuration(name, provider='synthetic', **values):
-    doc = frappe.get_doc(dict(doctype='AI Configuration',configuration_name=name,provider=provider,enabled=1))
+    doc = frappe.get_doc(dict(doctype='AI Configuration',configuration_name=name,provider=provider))
     for key, value in values.items():
         doc.append('parameters', dict(parameter_key=key, **({'secret_value':value} if key in ('api_key','auth_secret') else {'value':json.dumps(value)})))
-    with patch.object(config, 'run', side_effect=successful_probe):
+    with patch.object(config, 'run', side_effect=successful_probe), patch(
+            'messaging.chatbot.doctype.bot_settings.language.resolve_process_language', return_value='es'):
         doc.insert()
         config.check_connection(doc)
+    # Callers of this fixture supply a separate approval double.
+    adapters.set_profile_status(doc, 'Enabled')
     return doc
 
 
@@ -72,6 +120,10 @@ class TestAIConfiguration(unittest.TestCase):
         frappe.set_user('Administrator')
         self.prefix='ai_test_'+frappe.generate_hash(length=10)
         self.original=frappe.get_single('Bot Settings')
+        if not self.original.chatbot_languages:
+            from messaging.chatbot.doctype.bot_settings.test_bot_settings import configure_test_settings, restore_bot_settings
+            self.addCleanup(restore_bot_settings, self.original.as_dict())
+            configure_test_settings()
         frappe.db.set_single_value('Bot Settings', {'interpretation_enabled':1, 'registration_enabled':0, 'greeting_enabled':0}, update_modified=False)
         self.logs=set(frappe.get_all('AI Request Log',pluck='name'))
 
@@ -93,8 +145,10 @@ class TestAIConfiguration(unittest.TestCase):
         frappe.db.commit()
 
     def provider(self, profile_type='Decision', *, suffix='p'):
-        return frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix+'_'+suffix, provider_name='Synthetic classifier',
-            provider_type='External', decision=int(profile_type=='Decision'), parameter_extraction=int(profile_type=='Parameter Extraction'), enabled=1, schema_version='1')).insert()
+        doc = frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix+'_'+suffix, provider_name='Synthetic classifier',
+            provider_type='External', decision=int(profile_type=='Decision'), parameter_extraction=int(profile_type=='Parameter Extraction'), schema_version='1')).insert()
+        setup.set_provider_enabled(doc.name, True)
+        return doc.reload()
 
     def test_profile_purposes_preserve_existing_configuration_and_secrets(self):
         doc = create_configuration(self.prefix+'_purpose', api_key='synthetic-purpose')
@@ -146,7 +200,7 @@ class TestAIConfiguration(unittest.TestCase):
         with self.assertRaises(frappe.PermissionError):provider.save()
         provider.reload();provider.parameters[0].parameter_key='bad.key'
         with self.assertRaises(frappe.ValidationError):provider.save()
-        provider.reload();provider.parameters[0].default_value='9999'
+        provider.reload();next(row for row in provider.parameters if row.parameter_key == 'timeout').default_value='9999'
         with self.assertRaises(frappe.ValidationError):provider.save()
         provider.reload();provider.parameters.append(provider.parameters[0])
         with self.assertRaises(frappe.ValidationError):provider.save()
@@ -190,6 +244,27 @@ class TestAIConfiguration(unittest.TestCase):
         self.assertNotIn('changed-key',doc.diagnostic)
         self.assertFalse(config.availability()['operational'])
 
+    def test_native_decision_policy_is_separate_and_invalidates_material_changes(self):
+        doc = create_configuration(self.prefix + '_policy', api_key='synthetic-key')
+        self.assertEqual((doc.minimum_confidence, doc.intent_probability, doc.negation_probability), (.6, .75, .65))
+        self.assertNotIn('minimum_confidence', adapters.configuration_values(doc, config.provider_for(doc)))
+        generation = doc.evaluation_generation
+        with patch.object(adapters, 'run') as network, patch.object(frappe, 'enqueue') as enqueue:
+            doc.onload()
+            doc.intent_probability = .8
+            doc.save()
+            network.assert_not_called()
+            enqueue.assert_not_called()
+        self.assertEqual(doc.status, 'Unavailable')
+        self.assertNotEqual(doc.evaluation_generation, generation)
+        doc.negation_probability = .4
+        with self.assertRaises(frappe.ValidationError):
+            doc.save()
+        doc.reload()
+        doc.append('parameters', dict(parameter_key='minimum_confidence', value='0.9'))
+        with self.assertRaises(frappe.ValidationError):
+            doc.save()
+
     def test_probe_error_categories_and_no_reads_call_remote_services(self):
         doc=create_configuration(self.prefix+'_valid',api_key='synthetic-key')
         for code in ('authentication_error','timeout','rate_limited','unavailable','contract_invalid'):
@@ -203,7 +278,8 @@ class TestAIConfiguration(unittest.TestCase):
             self.assertTrue(config.test_connection(doc.name)['operational'])
         provider=frappe.get_doc('AI Provider','synthetic');provider.description='Administrative description'
         with self.assertRaises(frappe.PermissionError):provider.save()
-        self.assertEqual(config.resolve_configuration(doc.name)[0].name,doc.name)
+        self.assertEqual(doc.reload().status, 'Unavailable')
+        with self.assertRaises(adapters.AIServiceError):config.resolve_configuration(doc.name)
         external=self.provider();external_doc=create_configuration(self.prefix+'_fingerprint',provider=external.name,endpoint='https://example.com/interpret')
         external.description='Administrative description';external.save()
         self.assertEqual(config.resolve_configuration(external_doc.name)[0].name,external_doc.name)
@@ -212,7 +288,7 @@ class TestAIConfiguration(unittest.TestCase):
 
     def test_connection_probe_offers_a_signal_to_require_provider_interpretation(self):
         doc = create_configuration(self.prefix+'_signal', api_key='synthetic-key')
-        def inspect_probe(provider, values, request):
+        def inspect_probe(provider, values, request, **kwargs):
             self.assertTrue(request.greeting_available)
             self.assertFalse(request.human_attention_available)
             self.assertEqual(request.available_flows, ())
@@ -228,7 +304,7 @@ class TestAIConfiguration(unittest.TestCase):
         doc.reload()
         row = next(r for r in doc.parameters if r.parameter_key == 'api_key')
         row.secret_value = 'synthetic-replacement'
-        def inspect_saved(provider, values, request):
+        def inspect_saved(provider, values, request, **kwargs):
             self.assertEqual(values['api_key'], 'synthetic-replacement')
             self.assertEqual(get_decrypted_password(row.doctype, row.name, 'secret_value'), values['api_key'])
             raise adapters.AIServiceError('authentication_error')
@@ -246,7 +322,6 @@ class TestAIConfiguration(unittest.TestCase):
             # Native masks and an omitted Password preserve the existing encrypted credential.
             for secret in ('********', ''):
                 row.secret_value = secret
-                doc.enabled = not doc.enabled
                 doc.save()
                 self.assertEqual(get_decrypted_password(row.doctype, row.name, 'secret_value'), 'synthetic-replacement')
             self.assertEqual(probe.call_count, 1)
@@ -267,8 +342,7 @@ class TestAIConfiguration(unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):
             draft.save()
         self.assertEqual(frappe.db.get_value('AI Configuration', draft.name, 'provider'), 'synthetic')
-        provider.enabled = 0
-        provider.save()
+        setup.set_provider_enabled(provider.name, False)
         with self.assertRaises(frappe.ValidationError):
             frappe.get_doc(dict(doctype='AI Configuration', configuration_name=self.prefix+'_disabled',
                 provider=provider.name, enabled=0)).insert()
@@ -313,251 +387,276 @@ class TestAIConfiguration(unittest.TestCase):
 
     def test_administrative_permissions_and_provider_disabled(self):
         doc=create_configuration(self.prefix+'_valid',api_key='synthetic-key')
-        provider=frappe.get_doc('AI Provider','synthetic');provider.enabled=0
+        provider=frappe.get_doc('AI Provider','synthetic');provider.status='Unavailable'
         with self.assertRaises(frappe.PermissionError):provider.save()
-        self.assertEqual(frappe.db.get_value('AI Provider','synthetic','enabled'),1)
+        self.assertEqual(frappe.db.get_value('AI Provider','synthetic','status'),'Enabled')
         external=self.provider()
         disabled=create_configuration(self.prefix+'_disabled_provider',provider=external.name,endpoint='https://example.com/interpret')
-        external.enabled=0;external.save()
+        setup.set_provider_enabled(external.name, False)
         with self.assertRaises(adapters.AIServiceError) as error:config.resolve_configuration(disabled.name)
         self.assertEqual(error.exception.code,'provider_disabled')
+        self.assertEqual(disabled.reload().status, 'Unavailable')
+        modified = str(doc.modified)
         for user in ('Guest',):
             frappe.set_user(user)
             with self.assertRaises(frappe.PermissionError):config.test_connection(doc.name)
             with self.assertRaises(frappe.PermissionError):config.dashboard()
+            with self.assertRaises(frappe.PermissionError):config.set_active(doc.name, False, modified)
         frappe.set_user('Administrator')
+        doc.status = 'Disabled'
+        with self.assertRaises(frappe.PermissionError):doc.save()
+        with self.assertRaises(frappe.PermissionError):doc.db_set('status','Disabled')
 
-    def test_external_https_server_contract_and_http_failures(self):
-        from messaging.chatbot.doctype.bot_settings.test_bot_settings import configure_test_settings, restore_bot_settings
-        self.addCleanup(restore_bot_settings, self.original.as_dict())
-        frappe.db.set_single_value('Bot Settings', 'interpretation_enabled', 0, update_modified=False)
-        configure_test_settings()
-        observed=[]
-        class Handler(BaseHTTPRequestHandler):
-            mode='valid'
-            def log_message(self,*args):pass
-            def do_POST(self):
-                request=wire.strict_json(self.rfile.read(int(self.headers['Content-Length'])))
-                observed.append((request,self.headers.get('Authorization')))
-                mode=type(self).mode
-                if mode=='timeout':time.sleep(1.2)
-                status=int(mode) if mode.isdigit() else 200
-                self.send_response(status);self.send_header('Content-Type','application/json');self.end_headers()
-                if 'parameters' in request:
-                    result=wire.ParameterExtractionResponse(request['request_id'],tuple(
-                        wire.ExtractedParameter(row['ref'],wire.ExtractionStatus.EXTRACTED,
-                            ('123',) if mode=='extraction_invalid' else (123,)) for row in request['parameters']))
-                else:
-                    decision=Decision(outcome='recognized',flows=[request['available_flows'][0]['ref']]) if request['available_flows'] else Decision(outcome='empty_catalog')
-                    result=synthetic_wire_response(request,decision,.98)
-                result=wire.to_json(result)
-                if mode=='version':result['schema_version']='unsupported'
-                body=b'not-json' if mode=='malformed' else wire.serialize(result)
-                if mode=='oversized':body=b' '*(wire.MAX_RESPONSE_BYTES+1)
-                try:self.wfile.write(body)
-                except OSError:pass
-        with tempfile.TemporaryDirectory() as folder:
-            cert,key=Path(folder)/'cert.pem',Path(folder)/'key.pem'
-            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1',
-                '-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
-            tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);tls.load_cert_chain(cert,key)
-            server.socket=tls.wrap_socket(server.socket,server_side=True)
-            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-            try:
-                provider=self.provider()
-                with patch.dict(frappe.conf,{'messaging_ai_allowed_hosts':['localhost']}),patch.object(adapters.requests.certs,'where',return_value=str(cert)):
-                    doc=frappe.get_doc(dict(doctype='AI Configuration',configuration_name=self.prefix+'_remote',provider=provider.name,enabled=1))
-                    for keyname,value in dict(endpoint=f'https://localhost:{server.server_port}/interpret',auth_type='Bearer',timeout=1).items():
-                        doc.append('parameters',dict(parameter_key=keyname,value=json.dumps(value)))
-                    doc.append('parameters',dict(parameter_key='auth_secret',secret_value='synthetic-rest-secret'));doc.insert()
-                    config.test_connection(doc.name);doc.reload()
-                    self.assertEqual(doc.validation_status,'operational')
-                    values=config.configuration_values(doc,provider)
-                    request,refs=build_request('Saldo [numero_de_contrato]',{}, {'technical_flow':dict(name='Consultar saldo',description='Saldo público')},'es')
-                    result=adapters.run(provider,values,request)
-                    self.assertEqual(normalize_response(result,request,refs,minimum_confidence=.6).flows,['technical_flow'])
-                    self.assertEqual(observed[-1][0],wire.to_json(request))
-                    log = frappe.get_last_doc('AI Request Log', filters={'provider': provider.name})
-                    self.assertEqual(log.request_text, observed[-1][0]['message']['text'])
-                    self.assertEqual(log.transmission_state, 'Responded')
-                    self.assertEqual(observed[-1][1],'Bearer synthetic-rest-secret')
-                    self.assertNotIn('synthetic-rest-secret',json.dumps(observed[-1][0]))
-                    from messaging.chatbot.doctype.bot_settings.interpretation import interpret
-                    settings=frappe.get_single('Bot Settings');settings.interpretation_enabled=1;settings.active_ai_configuration=doc.name;settings.save()
-                    parameter=frappe._dict(name='private_parameter',label='Número de Contrato',parameter_type='Expression',expression='#####',enabled=1)
-                    flow=dict(name='Consultar saldo',description='Saldo público',parameters={parameter.name:parameter},multiple_parameters=[parameter.name])
-                    decision=interpret('Debía 54321 de mi contrato 12345.',{}, {'private_flow':flow},{},settings)
-                    self.assertEqual(decision.flows,['private_flow'])
-                    self.assertEqual(decision.parameters,{parameter.name:['54321','12345']})
-                    received=observed[-1][0]
-                    self.assertEqual(received['message']['text'],'Debía [numero_de_contrato] de mi contrato [numero_de_contrato].')
-                    log = frappe.get_last_doc('AI Request Log', filters={'configuration': doc.name})
-                    self.assertEqual(log.request_text, received['message']['text'])
-                    self.assertNotIn('synthetic-rest-secret', log.as_json())
-                    for private in ('54321','12345','private_parameter','private_flow','expression'):
-                        self.assertNotIn(private,json.dumps(received))
-                    for mode,expected in [('401','authentication_error'),('403','authentication_error'),('429','rate_limited'),('503','unavailable'),('302','contract_invalid'),('version','contract_invalid'),('malformed','contract_invalid'),('oversized','contract_invalid'),('timeout','timeout')]:
-                        Handler.mode=mode
-                        with self.subTest(mode=mode):self.assertEqual(config.test_connection(doc.name)['status'],expected)
-                    Handler.mode='valid';self.assertTrue(config.test_connection(doc.name)['operational'])
-                    extraction=self.provider('Parameter Extraction',suffix='extract_wire')
-                    profile=frappe.get_doc(dict(doctype='AI Configuration',configuration_name=self.prefix+'_extract_wire',
-                        provider=extraction.name,profile_type='Parameter Extraction',enabled=1))
-                    profile.append('parameters',dict(parameter_key='endpoint',value=json.dumps(f'https://localhost:{server.server_port}/extract')))
-                    profile.insert()
-                    request=wire.ParameterExtractionRequest('extract-wire',wire.Message('123'),'es',
-                        (wire.ExtractionParameter('number','Number',wire.ParameterType.INT),))
-                    values=config.configuration_values(profile,extraction,required=True)
-                    from messaging.chatbot.doctype.ai_request_log.ai_request_log import evaluation_scope
-                    with evaluation_scope(None,configuration=profile.name):
-                        result=adapters.run(extraction,values,request)
-                    self.assertEqual(result.parameters[0].values,(123,))
-                    log=frappe.get_last_doc('AI Request Log',filters={'configuration':profile.name})
-                    self.assertEqual(log.operation,'Parameter Extraction')
-                    self.assertEqual(profile.validation_status,'extraction_inactive')
-                    Handler.mode='extraction_invalid'
-                    with self.assertRaises(wire.InvalidInterpretation):adapters.run(extraction,values,request)
-                    Handler.mode='valid'
+    def test_external_https_contract_and_http_failures(self):
+        from messaging.chatbot.doctype.bot_settings.interpretation import interpret
 
-                with self.assertRaises(adapters.AIServiceError):adapters.endpoint_target(f'https://localhost:{server.server_port}/interpret')
-            finally:
-                server.shutdown();server.server_close();thread.join(3)
+        provider = self.provider()
+        secret = 'synthetic-rest-secret'
+        doc = self._profile(self.prefix + '_remote', provider, 'https://decision.example.test:9443/interpret',
+            auth_type='Bearer', auth_secret=secret)
+        seen = []
+        mode = 'valid'
 
-        for endpoint in ('http://example.com','https://u:p@example.com','https://example.com/#secret','https://example.com/?secret=x'):
-            with self.subTest(endpoint=endpoint),self.assertRaises(adapters.AIServiceError):adapters.endpoint_target(endpoint)
+        def reply(body, headers):
+            seen.append((body, headers))
+            if mode == 'timeout':
+                raise rest_transport.urllib3.exceptions.ReadTimeoutError(None, '/interpret', 'private')
+            if mode == 'tls':
+                raise rest_transport.urllib3.exceptions.SSLError('certificate verification failed')
+            if mode.isdecimal():
+                return int(mode), {'Location': 'https://blocked.example.test/'}, secret.encode()
+            response = rest_decision_body(body)
+            if response['results'] and body['available_flows']:
+                response['results'][0].update(classification='request', confidence=.98, probabilities={'request': .98})
+            if mode == 'version':
+                response['wire_version'] = 'decision-v1'
+            if mode == 'malformed':
+                return 200, JSON_HEADERS, b'not-json ' + secret.encode()
+            if mode == 'oversized':
+                return 200, JSON_HEADERS, b' ' * (wire.MAX_RESPONSE_BYTES + 1)
+            if mode == 'content_type':
+                return 200, {'Content-Type': 'text/html'}, secret.encode()
+            if mode == 'encoded':
+                return 200, dict(JSON_HEADERS, **{'Content-Encoding': 'gzip'}), b'compressed'
+            return 200, JSON_HEADERS, wire.serialize(response)
+
+        with simulated_rest_http(reply) as (connect, pool):
+            self.assertTrue(config.test_connection(doc.name)['operational'])
+            self.assertEqual(doc.reload().status, 'Untested')
+            adapters.set_profile_status(doc, 'Enabled')  # Approval double is scoped to this transport test.
+            settings = frappe.get_single('Bot Settings')
+            settings.active_ai_configuration = doc.name
+            settings.save()
+            parameter = frappe._dict(name='private_parameter', label='Número de Contrato', parameter_type='Expression',
+                expression='#####', enabled=1)
+            flow = dict(name='Consultar saldo', description='Saldo público', parameters={parameter.name: parameter},
+                multiple_parameters=[parameter.name])
+            decision = interpret('Debía 54321 de mi contrato 12345.', {}, {'private_flow': flow}, {}, settings)
+            self.assertEqual(decision.flows, ['private_flow'])
+            self.assertEqual(decision.parameters, {parameter.name: ['54321', '12345']})
+            body, headers = seen[-1]
+            self.assertEqual(body['wire_version'], DECISION_WIRE)
+            self.assertEqual(body['message']['text'], 'Debía [numero_de_contrato] de mi contrato [numero_de_contrato].')
+            self.assertEqual(headers['Authorization'], 'Bearer ' + secret)
+            self.assertEqual(headers['Host'], 'decision.example.test:9443')
+            for private in (secret, '54321', '12345', 'private_parameter', 'private_flow', 'expression'):
+                self.assertNotIn(private, json.dumps(body))
+            connect.assert_called_with('93.184.215.14', port=9443, server_hostname='decision.example.test',
+                assert_hostname='decision.example.test', cert_reqs='CERT_REQUIRED',
+                ca_certs=rest_transport.requests.certs.where(), maxsize=1)
+            args, kwargs = pool.urlopen.call_args
+            self.assertEqual(args, ('POST', '/interpret'))
+            for flag in ('redirect', 'retries', 'preload_content'):
+                self.assertIs(kwargs[flag], False)
+            pool.close.assert_called()
+            for mode, expected in (
+                ('401', 'authentication_error'), ('403', 'authentication_error'), ('429', 'rate_limited'),
+                ('503', 'unavailable'), ('302', 'contract_invalid'), ('version', 'contract_invalid'),
+                ('malformed', 'contract_invalid'), ('oversized', 'contract_invalid'), ('content_type', 'contract_invalid'),
+                ('encoded', 'contract_invalid'), ('timeout', 'timeout'), ('tls', 'unavailable'),
+            ):
+                with self.subTest(mode=mode):
+                    before = len(seen)
+                    self.assertEqual(config.test_connection(doc.name)['status'], expected)
+                    self.assertEqual(len(seen), before + 1)
+        for row in frappe.get_all('AI Request Log', filters={'configuration': doc.name}, pluck='name'):
+            self.assertNotIn(secret, frappe.get_doc('AI Request Log', row).as_json())
 
     def test_external_pretransmission_failure_has_prepared_evidence(self):
         provider = self.provider()
-        doc = create_configuration(self.prefix+'_prepared', provider=provider.name,
-            endpoint='https://example.com/interpret', auth_type='Bearer', auth_secret='synthetic-rest-secret')
+        doc = self._profile(self.prefix + '_prepared', provider, 'https://decision.example.test/interpret')
         values = config.configuration_values(doc, provider)
         request, _refs = build_request('Consulta [numero_de_contrato].\n  Texto sintético.', {}, {}, 'es')
         from messaging.chatbot.doctype.ai_request_log.ai_request_log import evaluation_scope
-        with evaluation_scope(None, configuration=doc.name), patch.object(adapters.socket, 'getaddrinfo', side_effect=OSError('private DNS error')), patch.object(adapters.urllib3.HTTPSConnectionPool, 'urlopen') as transport:
-            with self.assertRaises(adapters.AIServiceError):
+        with evaluation_scope(None, configuration=doc.name), simulated_rest_http(
+            None, dns_error=OSError('private DNS error')
+        ) as (connect, _pool):
+            with self.assertRaisesRegex(adapters.AIServiceError, 'unavailable'):
                 adapters.run(provider, values, request)
-            transport.assert_not_called()
+            connect.assert_not_called()
         log = frappe.get_doc('AI Request Log', {'configuration': doc.name})
         self.assertEqual((log.status, log.transmission_state, log.request_text),
             ('Failed', 'Prepared', request.message.text))
-        self.assertNotIn('synthetic-rest-secret', log.as_json())
+        self.assertNotIn('private DNS error', log.as_json())
 
     def test_external_provider_parameters_are_nested_typed_and_isolated(self):
-        provider = frappe.get_doc('AI Provider', 'synthetic')
-        probe, _refs = build_request('Hola', {}, {}, 'es')
-        self.assertEqual(adapters.outbound_request(provider, {}, probe), wire.to_json(probe))
-        self.assertNotIn('provider_parameters', wire.to_json(probe))
-        observed = []
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass
-            def do_POST(self):
-                body = wire.strict_json(self.rfile.read(int(self.headers['Content-Length'])))
-                observed.append(body)
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                flows = [body['available_flows'][0]['ref']] if body['available_flows'] else []
-                decision = Decision(outcome='recognized' if flows else 'empty_catalog', flows=flows)
-                self.wfile.write(wire.serialize(synthetic_wire_response(body, decision, .99)))
-        secret = 'synthetic-profile-secret'
-        with tempfile.TemporaryDirectory() as folder:
-            cert, key = Path(folder)/'cert.pem', Path(folder)/'key.pem'
-            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(key), '-out', str(cert),
-                '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            tls.load_cert_chain(cert, key)
-            server.socket = tls.wrap_socket(server.socket, server_side=True)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            try:
-                provider = self.provider(suffix='extra')
-                for row in (setup.parameter('model', 'Model', required=1),
-                    setup.parameter('temperature', 'Temperature', 'Float', minimum=0, maximum=1),
-                    setup.parameter('retries', 'Retries', 'Int', minimum=0, maximum=5),
-                    setup.parameter('enabled_flag', 'Enabled Flag', 'Check'),
-                    setup.parameter('customer_id', 'Customer')):
-                    provider.append('parameters', row)
-                provider.save()
-                endpoint = f'https://localhost:{server.server_port}/decision'
-                with patch.dict(frappe.conf, {'messaging_ai_allowed_hosts': ['localhost']}), patch.object(adapters.requests.certs, 'where', return_value=str(cert)):
-                    first = self._profile(self.prefix+'_a', provider, endpoint, secret, model='classifier-a', temperature=0.2, customer_id='customer-a')
-                    second = self._profile(self.prefix+'_b', provider, endpoint, secret, model='classifier-b', retries=0, enabled_flag=False)
-                    request, refs = build_request('Saldo [numero_de_contrato]', {}, {'balance': dict(name='Consultar saldo', description='Saldo público')}, 'es')
-                    result = adapters.run(provider, config.configuration_values(first, provider), request)
-                    self.assertEqual(normalize_response(result, request, refs, minimum_confidence=.6).flows, ['balance'])
-                    adapters.run(provider, config.configuration_values(second, provider), request)
-                    plain = self.provider(suffix='plain')
-                    plain_profile = self._profile(self.prefix+'_plain', plain, endpoint, secret)
-                    adapters.run(plain, config.configuration_values(plain_profile, plain), request)
-                    contract = {'schema_version', 'request_id', 'message', 'language', 'greeting_available', 'human_attention_available', 'context', 'available_flows', 'allowed_outcomes'}
-                    left, right, bare = observed
-                    self.assertEqual(set(left) - {'provider_parameters'}, contract)
-                    self.assertEqual(set(right) - {'provider_parameters'}, contract)
-                    self.assertEqual(set(bare), contract)
-                    self.assertNotIn('provider_parameters', bare)
-                    self.assertEqual(left['schema_version'], '1')
-                    self.assertEqual(left['provider_parameters'], {'customer_id': 'customer-a', 'model': 'classifier-a', 'temperature': 0.2})
-                    self.assertIs(type(left['provider_parameters']['temperature']), float)
-                    self.assertEqual(right['provider_parameters'], {'enabled_flag': False, 'model': 'classifier-b', 'retries': 0})
-                    self.assertIs(right['provider_parameters']['enabled_flag'], False)
-                    self.assertIs(type(right['provider_parameters']['retries']), int)
-                    for body in (left, right, bare):
-                        self.assertNotIn(secret, json.dumps(body))
-                        for transport in adapters.REST_TRANSPORT_KEYS:
-                            self.assertNotIn(transport, body.get('provider_parameters', {}))
-                    self.assertNotIn('customer-a', json.dumps(right))
-                    self.assertNotIn('classifier-a', json.dumps(right))
-                    missing = self._profile(self.prefix+'_missing', provider, endpoint, secret, temperature=0.2)
-                    before = len(observed)
-                    with self.assertRaises(adapters.AIServiceError) as error:
-                        adapters.run(provider, config.configuration_values(missing, provider), request)
-                    self.assertEqual(error.exception.code, 'configuration_incomplete')
-                    self.assertEqual(len(observed), before)
-                    extraction = self.provider('Parameter Extraction', suffix='extract')
-                    extraction.append('parameters', setup.parameter('model', 'Model', required=1))
-                    extraction.save()
-                    nested = adapters.outbound_request(extraction, {'model': 'extract-model'}, request)
-                    self.assertEqual(nested['provider_parameters'], {'model': 'extract-model'})
-                    self.assertNotIn('parameters', nested)
-                    self.assertNotIn('provider_parameters', wire.to_json(request))
-                    with self.assertRaises(adapters.AIServiceError) as error:
-                        adapters.run(extraction, {'model': 'extract-model', 'timeout': 5, 'minimum_confidence': .6,
-                            'endpoint': endpoint, 'auth_type': 'None'}, request)
-                    self.assertEqual(error.exception.code, 'capability_unavailable')
-                    self.assertEqual(len(observed), before)
-                for suffix, rows, text in (
-                    ('secret', setup.adapter_parameters('rest') + [setup.parameter('extra_secret', 'Extra', 'Password', required=1)], 'Additional secret parameters'),
-                    ('reserved', setup.adapter_parameters('rest') + [setup.parameter('message', 'Message')], 'reserved contract name')):
-                    doc = frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix+'_'+suffix,
-                        provider_name='Rejected classifier', provider_type='External', profile_type='Decision', enabled=1,
-                        schema_version='1', parameters=rows))
-                    with self.subTest(text=text), self.assertRaises(frappe.ValidationError) as error:
-                        doc.insert()
-                    self.assertIn(text, str(error.exception))
-                rejected = frappe.get_doc(dict(doctype='AI Configuration', configuration_name=self.prefix+'_hot', provider=provider.name, enabled=1))
-                rejected.append('parameters', dict(parameter_key='temperature', value=json.dumps('hot')))
-                with self.assertRaises(frappe.ValidationError):
-                    rejected.insert()
-                logs = frappe.get_all('AI Request Log', filters={'provider': ['in', [provider.name, plain.name]]}, fields=['name', 'request_text'])
-                self.assertTrue(logs)
-                for log in logs:
-                    self.assertEqual(log.request_text, request.message.text)
-                    self.assertNotIn(secret, frappe.get_doc('AI Request Log', log.name).as_json())
-            finally:
-                server.shutdown(); server.server_close(); thread.join(3)
+        provider = frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix + '_dual',
+            provider_name='Synthetic dual capability', decision=1, parameter_extraction=1, parameters=[
+                setup.parameter('model', 'Model', required=1, send_to_rest=1),
+                setup.parameter('temperature', 'Temperature', 'Float', minimum=0, maximum=1, send_to_rest=1),
+                setup.parameter('limit', 'Limit', 'Int', send_to_rest=1),
+                setup.parameter('enabled_flag', 'Enabled Flag', 'Check', send_to_rest=1),
+                setup.parameter('local_note', 'Local Note'),
+            ])).insert()
+        self.assertEqual(provider.status, 'Disabled')
+        setup.set_provider_enabled(provider.name, True)
+        provider.reload()
+        endpoint, secret = 'https://decision.example.test/score', 'synthetic-profile-secret'
+        first = self._profile(self.prefix + '_a', provider, endpoint, model='classifier-a', temperature=.2,
+            local_note='private-note', auth_type='Basic', username='example-user', auth_secret=secret)
+        second = self._profile(self.prefix + '_b', provider, 'https://extraction.example.test/observe',
+            profile_type='Parameter Extraction', model='extractor', limit=0, enabled_flag=False)
+        self.assertEqual(second.validation_status, 'extraction_inactive')
+        self.assertEqual((first.minimum_confidence, first.intent_probability, first.negation_probability), (.6, .75, .65))
+        self.assertFalse(second.minimum_confidence)
+        self.assertNotEqual(first.evaluation_generation, second.evaluation_generation)
+        definition = next(row for row in setup.parameter_schema(provider.name)['parameters']
+            if row['parameter_key'] == 'endpoint')
+        self.assertEqual(definition['label'], 'REST Service URL')
+        secret_row = next(row for row in first.parameters if row.parameter_key == 'auth_secret')
+        self.assertEqual(get_decrypted_password(secret_row.doctype, secret_row.name, 'secret_value'), secret)
+        self.assertNotIn(secret, first.as_json())
 
-    def _profile(self, name, provider, endpoint, secret, **values):
-        doc = frappe.get_doc(dict(doctype='AI Configuration', configuration_name=name, provider=provider.name, enabled=1))
-        values = dict(endpoint=endpoint, auth_type='Bearer', timeout=5, **values)
-        for key, value in values.items():
-            doc.append('parameters', dict(parameter_key=key, value=json.dumps(value)))
-        doc.append('parameters', dict(parameter_key='auth_secret', secret_value=secret))
-        doc.insert()
-        return doc
+        seen = []
+
+        def reply(body, headers):
+            seen.append((body, headers))
+            return 200, JSON_HEADERS, wire.serialize(rest_decision_body(body))
+
+        decision, _ = build_request('Hola', {}, {}, 'es', greeting_available=True)
+        extraction = wire.ParameterExtractionRequest('observe', wire.Message('0'), 'es',
+            (wire.ExtractionParameter('number', 'Number', wire.ParameterType.INT),))
+        with simulated_rest_http(reply) as (_connect, pool):
+            values = config.configuration_values(first, provider, required=True)
+            adapters.run(provider, values, decision, policy=config.profile_policy(first, provider))
+            self.assertEqual(seen[0][1]['Authorization'], 'Basic ' + base64.b64encode(
+                b'example-user:synthetic-profile-secret').decode())
+            body = seen[0][0]
+            self.assertEqual(body, dict(wire.to_json(decision), wire_version=DECISION_WIRE,
+                provider_parameters={'model': 'classifier-a', 'temperature': .2}))
+            extracted = config.configuration_values(second, provider, required=True)
+            self.assertNotEqual(values['endpoint'], extracted['endpoint'])
+            self.assertEqual(adapters.outbound_request(provider, extracted, extraction), dict(wire.to_json(extraction),
+                wire_version=EXTRACTION_WIRE, provider_parameters={'enabled_flag': False, 'limit': 0, 'model': 'extractor'}))
+            plain = self.provider(suffix='plain')
+            plain_profile = self._profile(self.prefix + '_plain', plain, endpoint)
+            adapters.run(plain, config.configuration_values(plain_profile, plain), decision)
+            self.assertNotIn('Authorization', seen[-1][1])
+            self.assertNotIn('provider_parameters', seen[-1][0])
+            draft = self._profile(self.prefix + '_draft_rest', provider, None, model='draft')
+            self.assertEqual(draft.validation_status, 'configuration_incomplete')
+            self.assertEqual(config.test_connection(draft.name)['status'], 'configuration_incomplete')
+            for invalid in (dict(values, unregistered='no'), dict(values, model=secret)):
+                with self.assertRaisesRegex(adapters.AIServiceError, 'configuration_incomplete'):
+                    adapters.run(provider, invalid, decision)
+            self.assertEqual(pool.urlopen.call_count, 2)
+        for key in ('minimum_confidence', 'intent_probability', 'negation_probability', 'wire_version', 'results',
+            'human_attention_available', 'message', 'parameters'):
+            with self.subTest(key=key), self.assertRaisesRegex(frappe.ValidationError, 'reserved contract name'):
+                frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix + '_reserved', provider_name='REST',
+                    decision=1, parameters=[setup.parameter(key, 'Reserved', send_to_rest=1)])).insert()
+        with self.assertRaisesRegex(frappe.ValidationError, 'Additional secret parameters'):
+            frappe.get_doc(dict(doctype='AI Provider', provider_id=self.prefix + '_password', provider_name='REST',
+                decision=1, parameters=[setup.parameter('extra_secret', 'Extra', 'Password', send_to_rest=1)])).insert()
+        provider.reload()
+        endpoint_definition = next(row for row in provider.parameters if row.parameter_key == 'endpoint')
+        endpoint_definition.send_to_rest = 1
+        with self.assertRaisesRegex(frappe.ValidationError, 'Connection parameters'):
+            provider.save()
+        provider.reload()
+        endpoint_definition = next(row for row in provider.parameters if row.parameter_key == 'endpoint')
+        endpoint_definition.default_value = endpoint
+        with self.assertRaisesRegex(frappe.ValidationError, 'on each AI profile'):
+            provider.save()
+
+    def _profile(self, name, provider, endpoint, *, profile_type='Decision', auth_secret=None, **values):
+        doc = frappe.get_doc(dict(doctype='AI Configuration', configuration_name=name, provider=provider.name,
+            profile_type=profile_type))
+        for key, value in dict(endpoint=endpoint, **values).items():
+            if value is not None:
+                doc.append('parameters', dict(parameter_key=key, value=json.dumps(value)))
+        if auth_secret:
+            doc.append('parameters', dict(parameter_key='auth_secret', secret_value=auth_secret))
+        return doc.insert()
+
+
+class TestRESTTransport(unittest.TestCase):
+    def test_request_byte_limit_is_enforced_before_network(self):
+        with patch.object(adapters, 'bounded_exchange') as transport:
+            with self.assertRaisesRegex(wire.InvalidInterpretation, 'Oversized interpretation request'):
+                adapters.rest_interpret({'message': {'text': 'é' * 60000}},
+                    {'endpoint': 'https://example.test/', 'auth_type': 'None', 'timeout': 5})
+            transport.assert_not_called()
+
+    def test_endpoint_url_and_address_policy(self):
+        for url in ('http://example.test', 'https://example.test:0/path', 'https://example.test:',
+            'https://example.test:65536', 'https://u:p@example.test', 'https://@example.test',
+            'https://example.test/?', 'https://example.test/#', 'https://example.test\t/path'):
+            with self.subTest(url=url), self.assertRaisesRegex(wire.AIServiceError, 'configuration_incomplete'):
+                rest_transport.endpoint_target(url)
+        self.assertEqual(rest_transport.endpoint_target('https://[2606:4700::1111]:8443/ai'),
+            ('2606:4700::1111', 8443, '/ai'))
+        for ip, allowed, expected in (
+            ('93.184.215.14', [], True), ('10.1.2.3', [], False), ('10.1.2.3', ['example.test'], True),
+            ('10.1.2.3', ['other.example.test'], False), ('224.0.0.1', ['example.test'], False),
+            ('0.0.0.0', ['example.test'], False), ('255.255.255.255', ['example.test'], False),
+            ('169.254.169.254', ['example.test'], False), ('ff02::1', ['example.test'], False),
+            ('::ffff:224.0.0.1', ['example.test'], False), ('::', ['example.test'], False),
+        ):
+            with self.subTest(ip=ip), patch.object(rest_transport.socket, 'getaddrinfo',
+                return_value=[(None, None, None, '', (ip, 443, 0, 0))]):
+                if expected:
+                    self.assertEqual(rest_transport._resolve('example.test', 443, allowed), ip)
+                else:
+                    with self.assertRaisesRegex(wire.AIServiceError, 'destination_blocked'):
+                        rest_transport._resolve('example.test', 443, allowed)
+        with patch.object(rest_transport.socket, 'getaddrinfo', return_value=[
+            (None, None, None, '', ('93.184.215.14', 443)), (None, None, None, '', ('10.1.2.3', 443)),
+        ]), self.assertRaisesRegex(wire.AIServiceError, 'destination_blocked'):
+            rest_transport._resolve('example.test', 443, [])
+
+    def test_subprocess_deadline_covers_dns_and_body_reads(self):
+        launch = subprocess.run
+        controlled_worker = """
+import sys
+import time
+from types import SimpleNamespace
+from messaging.chatbot.doctype.ai_configuration import rest_transport as transport
+def block(*args, **kwargs):
+    time.sleep(8)
+if sys.argv[1] == 'dns':
+    transport.socket.getaddrinfo = block
+else:
+    transport.socket.getaddrinfo = lambda *args, **kwargs: [(2, 1, 6, '', ('93.184.215.14', 443))]
+    response = SimpleNamespace(status=200, headers={'Content-Type': 'application/json'},
+        read1=block, close=lambda: None)
+    transport.urllib3.HTTPSConnectionPool = lambda *args, **kwargs: SimpleNamespace(
+        urlopen=lambda *args, **kwargs: response, close=lambda: None)
+transport._worker()
+"""
+        for phase in ('dns', 'body'):
+            def controlled(command, **kwargs):
+                self.assertEqual(command[1:], ['-m', rest_transport.__name__])
+                self.assertNotIn('synthetic-token', ' '.join(command))
+                self.assertIn(b'synthetic-token', kwargs['input'])
+                return launch([command[0], '-c', controlled_worker, phase], **kwargs)
+
+            with self.subTest(phase=phase), patch.object(subprocess, 'run', side_effect=controlled):
+                started = time.monotonic()
+                with self.assertRaisesRegex(wire.AIServiceError, 'timeout'):
+                    rest_transport.bounded_exchange(('example.test', 443, '/'), b'{}',
+                        {'Authorization': 'Bearer synthetic-token'}, 1, [])
+                self.assertLess(time.monotonic() - started, 3)
 
 
 class TestRecognitionContract(unittest.TestCase):

@@ -13,6 +13,7 @@ from frappe.model.base_document import get_controller
 from frappe.model.document import Document
 from frappe.tests.utils import FrappeTestCase
 
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.chatbot.doctype.bot_settings.localization import text as settings_text
 
 from messaging.communication.doctype.process_execution_log.process_execution_log import (
@@ -594,7 +595,9 @@ class TestEmptySettingsAndMatrices(FrappeTestCase):
         if frappe.db.exists('Communication Channel', 'emulator'):
             channel = frappe.get_doc('Communication Channel', 'emulator')
         else:
-            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator', enabled=1)).insert()
+            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator')).insert()
+            set_channel_status(channel.name, 'Enabled')
+            channel.reload()
         channel.update(dict(quotas_enabled=1, daily_quota_limit=20, monthly_quota_limit=60,
             quota_reservation_ttl_seconds=120, quota_timezone='America/Tegucigalpa', quota_courtesy_enabled=0))
         channel.save(); channel.reload()
@@ -730,7 +733,9 @@ class TestEmptySettingsAndMatrices(FrappeTestCase):
         if frappe.db.exists('Communication Channel', 'emulator'):
             channel = frappe.get_doc('Communication Channel', 'emulator')
         else:
-            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator', enabled=1)).insert()
+            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator')).insert()
+            set_channel_status(channel.name, 'Enabled')
+            channel.reload()
         channel.update(dict(quotas_enabled=1, daily_quota_limit=20, monthly_quota_limit=60,
             quota_reservation_ttl_seconds=120, quota_timezone='UTC', quota_courtesy_enabled=0, quota_courtesy_max_per_cycle=0))
         channel.save()
@@ -767,7 +772,9 @@ class TestEmptySettingsAndMatrices(FrappeTestCase):
         if frappe.db.exists('Communication Channel', 'emulator'):
             channel = frappe.get_doc('Communication Channel', 'emulator')
         else:
-            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator', enabled=1)).insert()
+            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator')).insert()
+            set_channel_status(channel.name, 'Enabled')
+            channel.reload()
         channel.update(dict(quotas_enabled=1, daily_quota_limit=20, monthly_quota_limit=60,
             quota_reservation_ttl_seconds=120, quota_timezone='UTC', quota_courtesy_enabled=0, quota_courtesy_max_per_cycle=0))
         channel.save()
@@ -994,7 +1001,7 @@ class TestFlowConsumerLayout(FrappeTestCase):
 class TestFeatureActivation(ProcessFixtures, unittest.TestCase):
     def enabled_registration_flow(self):
         from messaging.chatbot.doctype.bot_flow.test_bot_flow import TestBotFlow, contract_business, contract_flow
-        from messaging.registrations.processes import BotProcess
+        from messaging.registry.processes import BotProcess
         from messaging.registry.processes import register_processes
         flow, _ = TestBotFlow.configured(self)
         self.definitions.append(BotProcess(id=flow.process_definition, label='Technical inputs', definition=contract_flow, handler=contract_business))

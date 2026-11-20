@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import frappe
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.communication.doctype.communication_provider.communication_provider import (
 	_lock_provider_states,
 	_write_provider_states,
@@ -783,7 +784,7 @@ from messaging.communication.doctype.notification_rule import notification_rule 
 from messaging.communication.doctype.process_definition.test_process_definition import ProcessFixtures
 from messaging.registry.processes import register_processes
 
-from messaging.registrations.processes import NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse
+from messaging.registry.processes import NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse
 
 def prepare_sync(*, params, outcomes):
     outcomes.register('send', fields={'recipient':'string','label':'string'}, mode=['template', 'message'])
@@ -806,7 +807,8 @@ class TestTemplateRuleSync(unittest.TestCase):
         from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled
         set_provider_enabled('EMULR',True)
         if not frappe.db.exists('Communication Channel','emulator'):
-            frappe.get_doc(dict(doctype='Communication Channel',provider='EMULR',channel_name='Synthetic template channel',enabled=1)).insert()
+            channel = frappe.get_doc(dict(doctype='Communication Channel',provider='EMULR',channel_name='Synthetic template channel')).insert()
+            set_channel_status(channel.name, 'Enabled')
         contact = frappe.get_doc(dict(doctype='Emulator Contact', display_name='Synthetic sync context')).insert()
         account = frappe.get_doc(dict(doctype='Communication Channel Account', channel='emulator',
             account_id='template-sync-' + frappe.generate_hash(length=12), account_name='Synthetic sync account',
@@ -1059,14 +1061,14 @@ class TestTemplateRuleSync(unittest.TestCase):
         template.reload()
         self.assertEqual(template.status, 'Active')
 
-        from messaging import registry as registrations
+        from messaging.communication.doctype.communication_channel_account.test_communication_channel_account import registered_providers
         from messaging.communication.doctype.communication_provider.test_communication_provider import (
             PROBE,
             declaration,
             parameter,
             sync_communication_providers,
         )
-        original = registrations._installed_declarations
+        from messaging.registry import _installed_declarations
         custom_decl = declaration({
             **PROBE,
             'id': 'TSTTMPL',
@@ -1080,15 +1082,11 @@ class TestTemplateRuleSync(unittest.TestCase):
             'parameters': [parameter('tone', 'Select', scope='Template', options='formal\ncasual', default_value='formal', required=True)],
         })
 
-        def installed(app, kind):
-            if kind == 'communication_providers' and app == 'messaging':
-                return original(app, kind) + (custom_decl,)
-            return original(app, kind)
-
-        with patch.object(registrations, '_installed_declarations', side_effect=installed):
+        with registered_providers(_installed_declarations('messaging', 'communication_providers') + (custom_decl,)):
             sync_communication_providers()
             set_provider_enabled('TSTTMPL', True)
-            ch = frappe.get_doc(dict(doctype='Communication Channel', provider='TSTTMPL', channel_name='Custom param ch', enabled=1)).insert()
+            ch = frappe.get_doc(dict(doctype='Communication Channel', provider='TSTTMPL', channel_name='Custom param ch')).insert()
+            set_channel_status(ch.name, 'Enabled')
             acc = frappe.get_doc(dict(doctype='Communication Channel Account', channel=ch.name, account_id='acc-' + frappe.generate_hash(length=8), account_name='Custom param acc', enabled=0)).insert()
             tpl = frappe.get_doc(dict(doctype='Communication Template', language='es', channel=frappe.db.get_value('Communication Channel', {'provider': 'TSTTMPL'}, 'name'), status='Active',
                 template_name='param-sync-' + frappe.generate_hash(length=8), body='Param {{label}}',
@@ -1121,7 +1119,8 @@ class TestConcurrentTemplateRuleLocking(unittest.TestCase):
         register_processes(app='messaging', processes=[NotifyProcess(id='messaging.technical_template_sync',
             label='Technical template sync', definition=prepare_sync, handler=obtain_sync)])
         if not frappe.db.exists('Communication Channel', 'emulator'):
-            frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator', enabled=1)).insert()
+            channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Emulator')).insert()
+            set_channel_status(channel.name, 'Enabled')
             self.created.append(('Communication Channel', 'emulator'))
         contact = frappe.get_doc(dict(doctype='Emulator Contact', display_name='Concurrent sync context ' + frappe.generate_hash(length=6))).insert()
         self.created.append(('Emulator Contact', contact.name))
@@ -1350,26 +1349,22 @@ class TestTemplateUsage(ProcessFixtures, unittest.TestCase):
         self.assertEqual(frappe.db.count('Bot Flow Template', {'name': flow_template.name}), 1)
         self.assertEqual(frappe.db.count('Communication Template', {'name': notice.name}), 1)
 
-    def test_provider_templates_reuse_generic_reference_and_account_binding(self):
-        from messaging.communication.doctype.communication_template.communication_template import resolve_output
-        from messaging.communication.doctype.communication_template.communication_template import validate_template_fields
-        from messaging.communication.doctype.communication_provider.communication_provider import provider_definition
-        rule,source=self.notification()
-        provider=frappe.db.get_value('Communication Channel', frappe.db.get_value('Communication Channel Account', rule.account, 'channel'), 'provider')
-        template=frappe.get_doc(dict(doctype='Communication Template',channel=frappe.db.get_value('Communication Channel', {'provider': provider}, 'name'),status='Active',
-            template_name=self.prefix,language='es',body='Value {{value}}',
+    def test_legacy_external_capability_requires_a_published_contract(self):
+        from messaging.communication.doctype.communication_template import external
+        from messaging.communication.doctype.communication_template.communication_template import resolve_output, validate_template_fields
+        rule, _source = self.notification()
+        channel = frappe.db.get_value('Communication Channel Account', rule.account, 'channel')
+        template = frappe.get_doc(dict(doctype='Communication Template', channel=channel, status='Active',
+            template_name=self.prefix, language='es', body='Value {{value}}',
             template_variables=[dict(parameter_name='value')])).insert()
-        descriptor=dict(reference=template.name,account=rule.account,language='es',revision='synthetic-revision',
-            available=True,approved=True,variables=['value'])
-        definition=provider_definition('EMULR');definition={**definition,'capabilities':[*definition['capabilities'],'provider_templates']}
-        with patch('messaging.communication.doctype.communication_template.communication_template.provider_template_contract',return_value=descriptor) as resolver, \
-            patch('messaging.communication.doctype.communication_provider.communication_provider.provider_definition',return_value=definition):
-            validate_template_fields(template.name,{'value':'string'},usage='Notification',account=rule.account)
-            output=resolve_output('Template',template_reference=template.name,data={'value':'Public'},usage='Notification',account=rule.account)
-        self.assertEqual(output,dict(text='',variables={'value':'Public'},revision='synthetic-revision'))
-        resolver.assert_called_with(rule.account,template.name)
-        with self.assertRaises(frappe.ValidationError):
-            resolve_output('Template',template_reference=template.name,data={'value':'Public'},usage='Notification',account='other')
+        definition = external.provider_definition(template.provider)
+        legacy = dict(definition, capabilities=[*definition['capabilities'], 'provider_templates'])
+        with patch.object(external, 'provider_definition', return_value=legacy):
+            with self.assertRaises(frappe.ValidationError):
+                validate_template_fields(template.name, {'value': 'string'}, usage='Notification', account=rule.account)
+            with self.assertRaises(frappe.ValidationError):
+                resolve_output('Template', template_reference=template.name, data={'value': 'Public'},
+                    usage='Notification', account=rule.account)
 
     def test_notification_template_uses_selected_language_and_provider_mode(self):
         from messaging.communication.doctype.communication_template.communication_template import resolve_output
@@ -1380,8 +1375,9 @@ class TestTemplateUsage(ProcessFixtures, unittest.TestCase):
         template=frappe.get_doc(dict(doctype='Communication Template',channel=frappe.db.get_value('Communication Channel', {'provider': provider}, 'name'),status='Active',
             template_name=self.prefix,language='en',body='English notification.')).insert()
         self.assertEqual(resolve_output('Template',template_reference=template.name,data={},usage='Notification',account=rule.account)['text'], 'English notification.')
-        self.assertEqual(content_types(dict(capabilities=['provider_templates','notification_template_required'],
-            operations={'validate_notification':True,'resolve_provider_template':True,'prepare_provider_template':True})),['Template'])
+        self.assertEqual(content_types(dict(capabilities=['provider_templates', 'notification_template_required'],
+            operations={'validate_notification': True, 'prepare_provider_template': True},
+            template_statuses={'Approved': {'can_send': True}})), ['Template'])
 
 
 def resolve_dynamic_template(payload):
@@ -1431,7 +1427,7 @@ class TestTemplateProviderParameters(ProcessFixtures, unittest.TestCase):
 
     def test_dynamic_types_persist_edit_encrypt_and_reach_registered_adapter(self):
         from messaging.communication.doctype.communication_provider_value.communication_provider_value import parameter_schema,transport_parameters
-        from messaging.communication.doctype.communication_template.communication_template import provider_template_contract
+        from messaging.communication.doctype.communication_provider.communication_provider import operation, provider_definition
         from messaging.security.execution_context import _automation_context
         schema=parameter_schema('Communication Template', channel=self.binding.channel)
         self.assertEqual({p['parameter_key'] for p in schema['parameters']},
@@ -1448,8 +1444,9 @@ class TestTemplateProviderParameters(ProcessFixtures, unittest.TestCase):
         rows['remote_name'].value='"updated-remote"';template.save();template.reload()
         self.assertNotEqual(template.revision,initial)
         with _automation_context():
-            descriptor=provider_template_contract(self.binding.name,template.name)
-            self.assertEqual(descriptor['revision'],'updated-remote')
+            descriptor = operation(provider_definition('TSTPV'), 'resolve_provider_template',
+                dict(account=self.binding.name, reference=template.name, language=template.language))
+            self.assertEqual(descriptor['revision'], 'updated-remote')
             with self.assertRaises(frappe.PermissionError):transport_parameters('TSTPV',self.binding.name,template=template.name)
         self.network_mock.assert_not_called()
 
@@ -1474,9 +1471,9 @@ class TestTemplateProviderParameters(ProcessFixtures, unittest.TestCase):
         template.reload()
         self.account(self.channel('TSTOT',enabled=1,parameters=[]),account_id=self.prefix+'_other',enabled=1)
         template.channel=frappe.db.get_value('Communication Channel', {'provider': 'TSTOT'}, 'name')
-        with self.assertRaisesRegex(frappe.ValidationError,'channel is immutable'):template.save()
+        with self.assertRaisesRegex(frappe.ValidationError,'immutable'):template.save()
         template.reload();template.channel=frappe.db.get_value('Communication Channel', {'provider': 'TSTOT'}, 'name');template.set('parameters',[])
-        with self.assertRaisesRegex(frappe.ValidationError,'channel is immutable'):template.save()
+        with self.assertRaisesRegex(frappe.ValidationError,'immutable'):template.save()
         template.reload()
         with self.assertRaises(frappe.ValidationError):template.db_set('channel','other')
         with self.assertRaises(frappe.ValidationError):template.db_set('status','Inactive')
@@ -1489,25 +1486,27 @@ class TestTemplateProviderParameters(ProcessFixtures, unittest.TestCase):
         self.assertFalse(frappe.get_meta('Bot Flow Template').get_field('provider'))
         self.assertFalse(frappe.get_meta('Bot Flow Template').get_field('status'))
         fields={f.fieldname for f in frappe.get_meta('Communication Template').fields}
-        self.assertFalse({'external_reference','category','approval_status','usage_type','account','enabled','provider'} & fields)
+        self.assertFalse({'external_reference','category','approval_status','usage_type','enabled','provider'} & fields)
+        self.assertIn('account', fields)
         self.assertEqual(frappe.get_meta('Communication Template').get_field('parameters').options,'Communication Provider Value')
 
     def test_same_provider_account_and_template_ownership_are_exact(self):
-        from messaging.communication.doctype.communication_template.communication_template import provider_template_contract
-        from messaging.communication.doctype.communication_provider.communication_provider import used_keys
+        from messaging.communication.doctype.communication_provider.communication_provider import operation, provider_definition, used_keys
         from messaging.security.execution_context import _automation_context
         template=self.template().insert()
         self.assertIn('remote_name',used_keys('TSTPV'))
         other=self.account(frappe.get_doc('Communication Channel',self.binding.channel),account_id='other-synthetic',enabled=1)
         with _automation_context():
-            same_provider = provider_template_contract(other.name, template.name)
+            same_provider = operation(provider_definition('TSTPV'), 'resolve_provider_template',
+                dict(account=other.name, reference=template.name, language=template.language))
         self.assertEqual(same_provider['account'], other.name)
         from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled
         set_provider_enabled('TSTOT', True)
         foreign = self.account(self.channel('TSTOT', enabled=1, parameters=[]), account_id=self.prefix + '-foreign', enabled=1)
         with _automation_context():
             with self.assertRaises(frappe.ValidationError):
-                provider_template_contract(foreign.name, template.name)
+                operation(provider_definition('TSTPV'), 'resolve_provider_template',
+                    dict(account=foreign.name, reference=template.name, language=template.language))
         copy=frappe.copy_doc(template);copy.template_name=self.prefix+'-copy'
         copy.parameters[0].name=template.parameters[0].name
         copy.name=self.prefix+'-copy';copy.set_parent_in_children()
@@ -1608,6 +1607,11 @@ class TestRegisteredTemplateLocalization(unittest.TestCase):
         frappe.db.savepoint('template_localization')
         name = 'Registry Test ' + frappe.generate_hash(length=8)
         try:
+            if not frappe.db.exists('Communication Channel', 'emulator'):
+                from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled
+                set_provider_enabled('EMULR', True)
+                frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR',
+                    channel_name='Emulator')).insert()
             with patch('messaging.chatbot.doctype.bot_settings.language.get_bot_settings',
                     return_value=frappe._dict(chatbot_languages=[])), patch(
                     'messaging.chatbot.doctype.bot_settings.language.resolve_process_language',
@@ -1619,6 +1623,7 @@ class TestRegisteredTemplateLocalization(unittest.TestCase):
                 self.assertEqual(entry['language'], 'en')
                 self.assertEqual(save_registered_template(definition=definition, language='en'), identifier)
                 materialized = materialize_registered_template(identifier, channel='emulator')
+                self.assertEqual(materialize_registered_template(identifier, channel='emulator'), materialized)
                 template = frappe.get_doc('Communication Template', materialized)
                 self.assertEqual(template.status, 'Inactive')
                 self.assertEqual(template.provider, 'EMULR')
@@ -1744,8 +1749,8 @@ class TestTemplateStatusCapability(ProcessFixtures, unittest.TestCase):
 		self.assertEqual(str(approved.synced_at), previous_sync)
 		self.assertEqual(approved.last_error, 'sync_failed')
 		self.assertEqual(template.status, 'Active')
-		self.assertIsNone(notification_template_gate(template.name, self.binding.name))
-		self.assertEqual(notification_template_gate(template.name, self.other.name), 'template_unavailable')
+		self.assertEqual(notification_template_gate(template.name, self.binding.name), 'template_status_unknown')
+		self.assertEqual(notification_template_gate(template.name, self.other.name), 'template_status_unknown')
 
 		# Toggling administrative status keeps content revision intact and does not alter external status.
 		set_active(dict(name=template.name, modified=str(template.modified)), 0)
@@ -1758,10 +1763,10 @@ class TestTemplateStatusCapability(ProcessFixtures, unittest.TestCase):
 		self.assertEqual(template.status, 'Inactive')
 		self.assertEqual(next(row.provider_status for row in template.statuses if row.scope_key == self.other.name), 'APPROVED')
 
-		# Activating again keeps external approval until content actually changes; changing content requires fresh verification.
+		# A legacy status reading remains documentary after activation and edits.
 		set_active(dict(name=template.name, modified=str(template.modified)), 1)
 		template.reload()
-		self.assertIsNone(notification_template_gate(template.name, self.binding.name))
+		self.assertEqual(notification_template_gate(template.name, self.binding.name), 'template_status_unknown')
 		template.body = 'Edited content needing fresh approval'
 		template.save()
 		self.assertEqual(template.status, 'Active')
@@ -1769,7 +1774,7 @@ class TestTemplateStatusCapability(ProcessFixtures, unittest.TestCase):
 		STATUS['fail'] = False
 		sync_template_status(template, self.binding.name)
 		template.reload()
-		self.assertIsNone(notification_template_gate(template.name, self.binding.name))
+		self.assertEqual(notification_template_gate(template.name, self.binding.name), 'template_status_unknown')
 
 	def test_provider_without_status_capability_does_not_block(self):
 		from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled

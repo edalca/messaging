@@ -7,15 +7,23 @@ from frappe import _
 @contextmanager
 def contact_lock(key, *, timeout=10):
 	"""A connection lock survives the durable execution checkpoints and is released on disconnect."""
+	with connection_lock(key, timeout=timeout) as acquired:
+		if acquired:
+			# Contact entry points own the transaction and need a fresh read snapshot.
+			frappe.db.rollback()
+		elif timeout:
+			frappe.throw(_("This contact is currently being processed. Please retry later."))
+		yield acquired
+
+
+@contextmanager
+def connection_lock(key, *, timeout=10):
+	"""Serialize work across transactions on a single MariaDB connection."""
 	name = "messaging:" + key[:54]
 	if frappe.db.sql("SELECT GET_LOCK(%s, %s)", (name, timeout))[0][0] != 1:
-		if timeout == 0:
-			yield False
-			return
-		frappe.throw(_("This contact is currently being processed. Please retry later."))
+		yield False
+		return
 	try:
-		# Entry points own the transaction. Drop any read snapshot opened during permission checks.
-		frappe.db.rollback()
 		yield True
 	finally:
 		frappe.db.sql("SELECT RELEASE_LOCK(%s)", (name,))

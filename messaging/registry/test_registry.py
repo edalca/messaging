@@ -1,6 +1,7 @@
 """Functional registry boundaries and reusable real owner-hook fixtures."""
 from contextlib import contextmanager, ExitStack
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 import sys
 import tempfile
@@ -45,10 +46,10 @@ def owner_application(source, *, prefix='preset_owner'):
 class TestRegistry(unittest.TestCase):
     def test_three_categories_and_direct_public_facade(self):
         from messaging import registry
-        from messaging.registrations import processes, ai_providers, communication_providers
-        from messaging.registrations.processes.contracts import BotProcess, NotifyProcess
-        from messaging.registrations.ai_providers.contracts import AIProvider
-        from messaging.registrations.communication_providers.contracts import CommunicationProvider
+        from messaging.registry import processes, ai_providers, communication_providers
+        from messaging.registry.processes.contracts import BotProcess, NotifyProcess
+        from messaging.registry.ai_providers.contracts import AIProvider
+        from messaging.registry.communication_providers.contracts import CommunicationProvider
         self.assertIs(processes.BotProcess, BotProcess)
         self.assertIs(processes.NotifyProcess, NotifyProcess)
         self.assertFalse(hasattr(registry, 'Process'))
@@ -57,6 +58,7 @@ class TestRegistry(unittest.TestCase):
         self.assertFalse(hasattr(registry, 'ProcessNoResult'))
         self.assertIs(ai_providers.AIProvider, AIProvider)
         self.assertIs(communication_providers.CommunicationProvider, CommunicationProvider)
+        self.assertIsNone(find_spec('messaging.' + 'registrations'))
         self.assertEqual(set(_catalog.declaration_types()), {'processes', 'ai_providers', 'communication_providers'})
         self.assertFalse(hasattr(registry, 'BotFlowDefinition'))
         self.assertFalse(hasattr(registry, 'EvaluationTemplateDefinition'))
@@ -64,8 +66,9 @@ class TestRegistry(unittest.TestCase):
     def test_read_queries_do_not_materialize_or_execute_business(self):
         with patch('frappe.model.document.Document.db_insert', side_effect=AssertionError('No writes')):
             declarations = _catalog.application_declarations('messaging')
-        self.assertEqual({key: len(value) for key, value in declarations.items()},
-            dict(processes=3, ai_providers=0, communication_providers=1))
+        self.assertEqual(len(declarations['processes']), 3)
+        self.assertEqual(declarations['ai_providers'], ())
+        self.assertEqual({provider.id for provider in declarations['communication_providers']}, {'EMULR', 'WHATSAPP'})
         self.assertIsNone(_catalog._catalog.get())
 
     def test_registration_requires_authorized_hook_and_server_context(self):

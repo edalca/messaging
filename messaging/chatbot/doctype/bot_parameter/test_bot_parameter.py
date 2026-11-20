@@ -263,7 +263,7 @@ class TestBotParameter(FrappeTestCase):
 
 	def test_protection_of_parameter_referenced_by_flow(self) -> None:
 		from messaging.communication.doctype.process_definition import validation as testing
-		from messaging.registrations.processes import BotProcess
+		from messaging.registry.processes import BotProcess
 		from messaging.registry.processes import register_processes
 
 		param = self._create_parameter("test_protected_param", "Expression", mask="SC-#####")
@@ -436,7 +436,7 @@ class TestNameRecognition(unittest.TestCase):
 
 from unittest.mock import patch
 
-from messaging.registrations.processes import BotProcess, BotRequest, BotResponse
+from messaging.registry.processes import BotProcess, BotRequest, BotResponse
 from messaging.registry.processes import register_processes
 from messaging.communication.doctype.process_definition import validation as testing
 from messaging.communication.doctype.process_definition.test_process_definition import ProcessFixtures

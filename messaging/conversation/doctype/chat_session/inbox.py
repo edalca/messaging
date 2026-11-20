@@ -689,7 +689,7 @@ def channels_and_accounts(channel=None):
 	if manager:
 		channels = frappe.get_all(
 			'Communication Channel',
-			filters={'enabled': 1},
+			filters={'status': 'Enabled'},
 			fields=['name', 'channel_name', 'provider'],
 			order_by='channel_name asc'
 		)
@@ -730,7 +730,7 @@ def channels_and_accounts(channel=None):
 		channel_names = list({g['channel'] for g in grants})
 		channels = frappe.get_all(
 			'Communication Channel',
-			filters={'name': ['in', channel_names], 'enabled': 1},
+			filters={'name': ['in', channel_names], 'status': 'Enabled'},
 			fields=['name', 'channel_name', 'provider'],
 			order_by='channel_name asc'
 		) if channel_names else []
@@ -1001,9 +1001,11 @@ def history(session_name, before=None, limit=60, mine_only=0, historical=0):
 
 	channel_doc = frappe.db.get_value(
 		'Communication Channel', session.channel,
-		['name', 'channel_name', 'provider', 'enabled'],
+		['name', 'channel_name', 'provider', 'status'],
 		as_dict=True
 	) or {}
+	if channel_doc:
+		channel_doc['enabled'] = int(channel_doc.pop('status') == 'Enabled')
 
 	can_view_sender = frappe.session.user == 'Administrator' or contact.has_permlevel_access_to('external_sender')
 	can_view_profile = frappe.session.user == 'Administrator' or contact.has_permlevel_access_to('parameter_values')
@@ -1051,7 +1053,7 @@ def history(session_name, before=None, limit=60, mine_only=0, historical=0):
 
 
 @frappe.whitelist(methods=['POST'])
-def mark_read(session_name, through):
+def mark_read(session_name, through, visible=None):
 	initial = frappe.get_doc('Chat Session', session_name)
 	check_session(initial)
 	key = frappe.db.get_value('Chat Contact', initial.contact, 'identity_key')
@@ -1065,8 +1067,21 @@ def mark_read(session_name, through):
 			cursor = max(0, cint(through))
 			if cursor > (session.message_sequence or 0):
 				frappe.throw(_("Invalid read cursor."))
-			session.read_sequence = max(session.read_sequence or 0, cursor)
+			previous = session.read_sequence or 0
+			session.read_sequence = max(previous, cursor)
 			session.save(ignore_permissions=True)
+			if visible:
+				if isinstance(visible, str):
+					visible = frappe.parse_json(visible)
+				if (not isinstance(visible, list) or len(visible) > 100
+					or any(not isinstance(name, str) or len(name) > 140 for name in visible)):
+					frappe.throw(_("Invalid read cursor."))
+				from messaging.conversation.doctype.chat_message.read_receipts import schedule_read_receipts
+				receipts = frappe.get_all('Chat Message', filters={
+					'name': ['in', visible], 'session': session.name, 'kind': 'Incoming',
+					'sequence': ['<=', cursor],
+				}, pluck='external_id')
+				schedule_read_receipts(session.account, receipts)
 			frappe.db.commit()
 			return session.read_sequence
 		except Exception:

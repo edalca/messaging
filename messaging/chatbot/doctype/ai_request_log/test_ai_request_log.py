@@ -13,7 +13,7 @@ class TestAIRequestLog(unittest.TestCase):
 
 class TestProviderDiagnostics(unittest.TestCase):
     def setUp(self):
-        from messaging.registrations import ai_providers as wire
+        from messaging.registry import ai_providers as wire
         from messaging.chatbot.doctype.ai_request_log import ai_request_log as logs
         self.wire, self.logs = wire, logs
         frappe.set_user('Administrator')
@@ -112,39 +112,44 @@ class TestProviderDiagnostics(unittest.TestCase):
         with self.assertRaises(frappe.PermissionError):
             get('AI Request Log', doc.name)
 
-    def test_rest_boundary_preserves_response_and_contract_failure(self):
+    def test_rest_boundary_preserves_evidence_and_redacts_contract_failures(self):
         import json
-        from unittest.mock import patch
+        from dataclasses import replace
         from messaging.chatbot.doctype.ai_configuration import execution
-        provider = frappe._dict(name=self.provider.name, provider_type='External', enabled=1,
+        from messaging.chatbot.doctype.ai_configuration.test_ai_configuration import JSON_HEADERS, simulated_rest_http
+        from messaging.registry.ai_providers.rest import DECISION_WIRE
+
+        wire = self.wire
+        request = replace(self.request, greeting_available=False, human_attention_available=False)
+        provider = frappe._dict(name=self.provider.name, provider_type='External', status='Enabled',
             decision=1, schema_version='1', parameters=[])
-        values = dict(endpoint='https://provider.example.test', auth_type='None', timeout=5, minimum_confidence=.6)
-        response = self.wire.DecisionResponse(self.request.request_id, self.wire.DecisionOutcome.RECOGNIZED, ('balance',))
-        body = self.wire.to_json(response)
-        def transport(*args, **kwargs):
-            kwargs['_request_evidence'].update(transmission_state='Responded', http_status=200)
-            self.wire.capture_response(json.dumps(body))
-            return body
-        with patch.object(execution, 'rest_interpret', side_effect=transport) as http:
-            self.assertEqual(execution.run(provider, values, self.request), response)
-            http.assert_called_once()
+        values = dict(endpoint='https://provider.example.test', auth_type='None', timeout=5)
+        response = wire.DecisionEvidence(request.request_id, (
+            wire.DecisionClassificationResult('balance', wire.DecisionClassification.REQUEST, .92),
+        ))
+        body = dict(wire.to_json(response), wire_version=DECISION_WIRE)
+
+        def reply(_request, _headers):
+            return 200, JSON_HEADERS, wire.serialize(body)
+
+        with simulated_rest_http(reply):
+            self.assertEqual(execution.run(provider, values, request), response)
         log = frappe.get_doc('AI Request Log', {'provider': provider.name})
         evidence = json.loads(log.result_summary)
         self.assertEqual(evidence['provider_response'], body)
-        self.assertEqual(evidence['normalized_response'], body)
+        self.assertEqual(evidence['normalized_response'], wire.to_json(response))
         self.assertEqual(evidence['http_status'], 200)
         frappe.db.rollback()
-        body['decision']['flows'] = ['not_offered']
-        with patch.object(execution, 'rest_interpret', side_effect=transport):
-            with self.assertRaises(self.wire.InvalidInterpretation):
-                execution.run(provider, values, self.request)
+        body['results'][0]['option_id'] = 'not_offered'
+        with simulated_rest_http(reply), self.assertRaises(wire.InvalidInterpretation):
+            execution.run(provider, values, request)
         log = frappe.get_doc('AI Request Log', {'provider': provider.name})
         evidence = json.loads(log.result_summary)
         self.assertEqual(log.status, 'Failed')
         self.assertEqual(log.error_code, 'contract_invalid')
         self.assertEqual(evidence['contract_validation'], 'Failed')
         self.assertIsNone(evidence['normalized_response'])
-        self.assertEqual(evidence['provider_response']['decision']['flows'], ['[redacted]'])
+        self.assertEqual(evidence['provider_response']['results'][0]['option_id'], '[redacted]')
 
     def test_secret_reflections_in_model_and_request_metadata_are_protected(self):
         from unittest.mock import patch

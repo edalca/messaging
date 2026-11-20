@@ -6,6 +6,7 @@ from unittest.mock import patch
 import frappe
 from frappe.client import set_value as client_set_value
 
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.common.primitives import identity_key
 from messaging.communication.doctype.communication_channel_account.test_communication_channel_account import (
 	registered_providers,
@@ -222,14 +223,14 @@ class TestChatAgent(unittest.TestCase):
 		sync_communication_providers()
 		set_provider_enabled("EMULR", True)
 		if not frappe.db.exists("Communication Channel", "emulator"):
-			frappe.get_doc(
+			channel = frappe.get_doc(
 				{
 					"doctype": "Communication Channel",
 					"provider": "EMULR",
 					"channel_name": "Channel Emulator",
-					"enabled": 1,
 				}
 			).insert(ignore_permissions=True)
+			set_channel_status(channel.name, 'Enabled')
 		with registered_providers([emulator_definition()]):
 			account_doc = frappe.get_doc(
 				{

@@ -51,7 +51,7 @@ add_to_apps_screen = [
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Communication Channel": "public/js/whatsapp_channel.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_kanban_js = {"doctype" : "public/js/doctype_kanban.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -125,9 +125,10 @@ after_migrate = "messaging.setup.after_migrate"
 
 # before_app_uninstall = "messaging.utils.before_app_uninstall"
 before_app_uninstall = "messaging.setup.before_app_uninstall"
-after_app_uninstall = (
-	"messaging.communication.doctype.process_definition.process_definition.after_app_uninstall"
-)
+after_app_uninstall = [
+	"messaging.communication.doctype.process_definition.process_definition.after_app_uninstall",
+	"messaging.registry.ai_providers.operations.after_app_uninstall",
+]
 
 # Build
 # ------------------
@@ -195,17 +196,13 @@ has_permission = {
 
 # Observe business events independently of explicit channel ingress.
 doc_events = {
+	"Communication Channel": {"validate": "messaging.whatsapp.configuration.validate_channel"},
+	"Communication Channel Account": {"validate": "messaging.whatsapp.configuration.validate_account"},
 	"Process Definition": {
-		"on_update": [
-			"messaging.chatbot.doctype.bot_flow.bot_flow.invalidate_process_approval",
-			"messaging.communication.doctype.notification_rule.notification_rule.invalidate_process_approval",
-		],
+		"on_update": "messaging.communication.doctype.process_definition.approval.process_changed",
 	},
 	"AI Provider": {
-		"on_update": [
-			"messaging.chatbot.doctype.ai_configuration.ai_configuration.provider_changed",
-			"messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed",
-		],
+		"on_update": "messaging.chatbot.doctype.ai_configuration.ai_configuration.provider_changed",
 	},
 	"Bot Settings": {
 		"on_update": "messaging.chatbot.doctype.ai_evaluation_run.dependencies.dependencies_changed"

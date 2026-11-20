@@ -8,6 +8,7 @@ import multiprocessing
 
 import frappe
 
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.conversation.doctype.chat_turn import ingress as turn_ingress
 from messaging.chatbot.doctype.bot_dispatch import delivery as bot_delivery
 from messaging.communication.doctype.communication_channel_account import communication_channel_account as channel_transport
@@ -60,7 +61,7 @@ def registered_providers(definitions=None):
 
 
 def bind(reference, *, provider='CTRPRO', name=None):
-	channel = 'test' if provider == 'CTRPRO' else 'other-test'
+	channel = 'test' if provider == 'CTRPRO' else 'other_test'
 	doc = frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel,
 		account_id=reference, account_name='Synthetic contract account', enabled=1))
 	if not resolve_account(doc): frappe.throw('Synthetic unavailable account')
@@ -112,9 +113,10 @@ class TestChannelContracts(unittest.TestCase):
 		self.provider_states_before = get_provider_states()
 		from messaging.communication.doctype.communication_provider.test_communication_provider import sync_communication_providers
 		sync_communication_providers()
-		for provider, channel in [('CTRPRO','test'), ('CTROTH','other-test')]:
+		for provider, channel in [('CTRPRO','test'), ('CTROTH','other test')]:
 			set_provider_enabled(provider, True)
-			frappe.get_doc(dict(doctype='Communication Channel', provider=provider, channel_name='Synthetic contract channel', enabled=1)).insert(set_name=channel)
+			channel = frappe.get_doc(dict(doctype='Communication Channel', provider=provider, channel_name=channel)).insert()
+			set_channel_status(channel.name, 'Enabled')
 		self.bindings = [bind(self.prefix), bind(self.prefix + '_other', provider='CTROTH')]
 		self.accounts.extend(doc.name for doc in self.bindings)
 		frappe.db.commit()
@@ -131,7 +133,7 @@ class TestChannelContracts(unittest.TestCase):
 					frappe.delete_doc('Communication Channel Account', doc.name, ignore_permissions=True)
 			from messaging.communication.doctype.communication_provider.communication_provider import catalog_sync
 			with catalog_sync():
-				for channel, provider in [('test','CTRPRO'), ('other-test','CTROTH')]:
+				for channel, provider in [('test','CTRPRO'), ('other_test','CTROTH')]:
 					if frappe.db.exists('Communication Channel', channel):
 						frappe.delete_doc('Communication Channel', channel, ignore_permissions=True)
 					if frappe.db.exists('Communication Provider', provider):
@@ -433,7 +435,7 @@ class TestAutomation(unittest.TestCase):
 		code = "automatic_flow_" + frappe.generate_hash(length=10)
 		path = "messaging.communication.doctype.process_definition.test_process_definition.technical_flow"
 		from messaging.registry.processes import register_processes
-		from messaging.registrations.processes import BotProcess
+		from messaging.registry.processes import BotProcess
 		from messaging.communication.doctype.process_definition.test_process_definition import technical_business
 		flow = frappe.new_doc("Bot Flow")
 		flow.update(dict(workflow_code=code, workflow_name=code,
@@ -470,7 +472,7 @@ class TestAutomation(unittest.TestCase):
 		if not frappe.db.exists("Communication Channel", accounts.CHANNEL):
 			provider_catalog.set_provider_enabled(accounts.PROVIDER, True)
 			frappe.get_doc(dict(doctype="Communication Channel", provider=accounts.PROVIDER,
-				channel_name="Synthetic emulator channel", enabled=0)).insert()
+				channel_name="Synthetic emulator channel")).insert()
 		return frappe.get_doc(dict(doctype="Communication Channel Account", channel=accounts.CHANNEL,
 			account_name="Synthetic identity test", enabled=0) | values).insert()
 

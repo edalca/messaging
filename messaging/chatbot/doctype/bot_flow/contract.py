@@ -5,7 +5,7 @@ import json
 import frappe
 from frappe import _
 
-from messaging.registrations.processes import FLOW_ACTIONS, _input_definitions, project_outcomes
+from messaging.registry.processes import FLOW_ACTIONS, _input_definitions, project_outcomes
 from messaging.communication.doctype.process_definition.process_definition import (
     bind_definition,
     registered_contract,
@@ -57,7 +57,9 @@ def synchronize(flow, *, contract=None, replace=False):
 	Discovery may replace the active draft. Ordinary saves reject stale projections
 	and handler paths instead of laundering another definition's configuration.
 	"""
-	definition = resolve_definition(flow.process_definition, expected_type="bot_flow")
+	previous_save = flow.get_doc_before_save()
+	definition = resolve_definition(flow.process_definition, expected_type="bot_flow",
+		allow_retired=bool(previous_save and previous_save.process_definition == flow.process_definition))
 	previous = None if flow.is_new() else frappe.get_doc("Bot Flow", flow.name)
 	snapshot = json.loads(flow.get("process_contract") or "{}")
 	changed = previous and previous.process_definition != flow.process_definition
@@ -95,7 +97,7 @@ def synchronize(flow, *, contract=None, replace=False):
 						"Rows from the previous Process Definition cannot be reused. Discover the selected definition again."
 					)
 				)
-	bind_definition(flow)
+	bind_definition(flow, allow_retired=True)
 	validate_process_assignment(flow, definition)
 	if contract is None:
 		contract = registered_contract(definition)

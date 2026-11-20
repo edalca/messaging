@@ -1,4 +1,5 @@
 """Transactional preparation, durable dispatch and real emulator integration fixtures."""
+from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.registry import load_declarations
 from messaging.communication.doctype.communication_provider import communication_provider as provider_catalog
 from contextlib import contextmanager, nullcontext
@@ -159,7 +160,7 @@ def prepare_controlled_text_handler(request: NotifyRequest) -> NotifyResponse | 
 	return NotifyResponse('send', data={'recipient': res['recipient'], 'notice_text': res['data']['text']})
 
 
-from messaging.registrations.processes import BotParams, BotProcess, BotRequest, BotResponse, ProcessOutcomes
+from messaging.registry.processes import BotParams, BotProcess, BotRequest, BotResponse, ProcessOutcomes
 
 
 def human_open_def(*, params: BotParams, outcomes: ProcessOutcomes) -> None:
@@ -185,8 +186,9 @@ class TestNotificationRule(unittest.TestCase):
 		frappe.clear_cache(doctype='Emulator Contact')
 		set_provider_enabled('EMULR', True)
 		if not frappe.db.exists('Communication Channel', 'emulator'):
-			frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Synthetic emulator', enabled=1)).insert()
-		from messaging.registrations.processes import BotProcess
+			channel = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Synthetic emulator')).insert()
+			set_channel_status(channel.name, 'Enabled')
+		from messaging.registry.processes import BotProcess
 		register_processes(app='messaging', processes=[
 			NotifyProcess(id='messaging.test_rule_controlled', label='Test rule controlled',
 				definition=prepare_controlled_def, handler=prepare_controlled_handler),
@@ -301,13 +303,13 @@ class TestNotificationRule(unittest.TestCase):
 			if process_definition == 'messaging.test_rule_controlled':
 				outputs.append(dict(status_code='skip', output_mode='Template', send=0))
 		parameters = values.pop('parameters', [dict(parameter_key='notification_contact', value=json.dumps(self.destination.name))] if account else [])
-		data = dict(doctype='Notification Rule', rule_name='Synthetic notification rule', enabled=1, notification_delay_minutes=60,
+		data = dict(doctype='Notification Rule', rule_name='Synthetic notification rule', status='Enabled', notification_delay_minutes=60,
 			source_application='messaging', source_doctype='Emulator Contact', events=[dict(document_event='after_insert')],
 			process_definition=process_definition, process_invocation_mode='Internal Call (frappe.call)',
 			account=account, parameters=parameters, outputs=outputs)
 		data.update(values)
 		doc = frappe.get_doc(dict(data, __islocal=1))
-		if data.get('enabled', 1):
+		if data.get('status', 'Enabled') == 'Enabled':
 			answer = process_testing.test_method(doc.as_dict(), {'name': self.destination.name})
 			self.logs.append(answer.get('execution_log'))
 			self.assertEqual(answer['status'], 'Passed', answer)
@@ -354,7 +356,7 @@ class TestNotificationRule(unittest.TestCase):
 			dict(events=[dict(document_event='on_submit')]), dict(events=[dict(document_event='on_cancel')]),
 			dict(process_definition='messaging.not.authorized'),
 			dict(template_reference='../ invalid'), dict(source_doctype='Notification Queue')]:
-			with self.subTest(values=values), self.assertRaises((frappe.ValidationError, AssertionError)): self.rule(enabled=0, **values)
+			with self.subTest(values=values), self.assertRaises((frappe.ValidationError, AssertionError)): self.rule(status='Disabled', **values)
 		data = configuration('messaging', 'Emulator Contact', self.account)
 		self.assertEqual(data['events'], ['after_insert', 'on_update'])
 		self.assertEqual(data['content_types'], ['Template'])
@@ -493,13 +495,15 @@ class TestNotificationRule(unittest.TestCase):
 		self.rule(); self.contact(); doc = self.queue(); original = doc.variables_json
 		for target in ('provider', 'channel', 'account', 'rule'):
 			if target == 'provider': set_provider_enabled('EMULR', False)
+			elif target == 'channel': set_channel_status('emulator', 'Disabled')
 			else:
-				dt, name = {'channel':('Communication Channel','emulator'), 'account':('Communication Channel Account',self.account), 'rule':('Notification Rule',self.rules[0])}[target]
+				dt, name = {'account':('Communication Channel Account',self.account), 'rule':('Notification Rule',self.rules[0])}[target]
 				item = frappe.get_doc(dt, name); item.enabled = 0; item.save()
 			frappe.db.commit()
 			result = dispatch.deliver(doc.name, now=get_datetime(doc.scheduled_at)+timedelta(days=1))
 			self.assertEqual(result['state'], 'Deferred')
 			if target == 'provider': set_provider_enabled('EMULR', True)
+			elif target == 'channel': set_channel_status('emulator', 'Enabled')
 			else: item.reload(); item.enabled = 1; item.save()
 			frappe.db.commit(); doc.reload()
 		self.assertEqual(dispatch.deliver(doc.name, now=get_datetime(doc.scheduled_at)+timedelta(days=2))['state'], 'Accepted')
@@ -696,7 +700,8 @@ class TestNotificationRule(unittest.TestCase):
 			try:
 				sync_communication_providers(); set_provider_enabled('NOTPRO', True)
 				for index in range(2):
-					channel=frappe.get_doc(dict(doctype='Communication Channel', provider='NOTPRO', channel_name='Synthetic notification channel', enabled=1)).insert()
+					channel=frappe.get_doc(dict(doctype='Communication Channel', provider='NOTPRO', channel_name='Synthetic notification channel')).insert()
+					set_channel_status(channel.name, 'Enabled')
 					channels_created.append(channel.name)
 					binding=frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel.name, account_id='synthetic-opaque-id-'+str(index), account_name='Synthetic channel binding', enabled=1)).insert()
 					bindings.append(binding.name); self.accounts.append(binding.name)
@@ -763,14 +768,14 @@ class TestNotificationRule(unittest.TestCase):
 		with self.assertRaises(frappe.ValidationError):
 			rule.save()
 		rule.reload()
-		rule.enabled = 0; rule.notification_delay_minutes = 5; rule.save()
+		rule.status = 'Disabled'; rule.notification_delay_minutes = 5; rule.save()
 		answer = process_testing.test_method(rule.as_dict())
 		self.logs.append(answer['execution_log']); self.assertEqual(answer['status'], 'Passed')
-		rule.enabled = 1; rule.save()
+		rule.status = 'Enabled'; rule.save()
 		frappe.db.commit(); self.contact('New delay'); second = self.queue(rule.name)
 		self.assertEqual(get_datetime(second.scheduled_at)-get_datetime(second.event_at), timedelta(minutes=5))
 		first.reload(); self.assertEqual(get_datetime(first.scheduled_at), original_schedule)
-		rule.enabled = 0; rule.save(); frappe.db.commit(); ignored = self.contact('Disabled rule')
+		rule.status = 'Disabled'; rule.save(); frappe.db.commit(); ignored = self.contact('Disabled rule')
 		self.assertEqual(len(_calls), 2)
 		self.assertFalse(frappe.db.exists('Process Execution Log', {'source_name': rule.name, 'source_document': ignored.name}))
 
@@ -794,7 +799,7 @@ class TestNotificationRule(unittest.TestCase):
 		disabled = self.contact('Disabled selection'); disabled.enabled = 0; disabled.save(); frappe.db.commit()
 		with self.assertRaises(frappe.ValidationError):
 			self.rule(parameters=[dict(parameter_key='notification_contact', value=json.dumps(disabled.name))])
-		rule = self.rule(enabled=0, account=None, parameters=[], template_provider='EMULR')
+		rule = self.rule(status='Disabled', account=None, parameters=[], template_provider='EMULR')
 		self.assertFalse(rule.parameters)
 		rule.account = self.account
 		rule.set('parameters', [dict(parameter_key='notification_contact', value=json.dumps(self.destination.name))])
@@ -802,7 +807,7 @@ class TestNotificationRule(unittest.TestCase):
 		answer = process_testing.test_method(rule.as_dict(), {'name': self.destination.name})
 		self.logs.append(answer.get('execution_log'))
 		self.assertEqual(answer['status'], 'Passed', answer)
-		rule.enabled = 1; rule.save(); frappe.db.commit()
+		rule.status = 'Enabled'; rule.save(); frappe.db.commit()
 		self.contact(); doc = self.queue()
 		self.assertEqual(doc.recipient, '+50499991234')
 		self.assertEqual(doc.effective_recipient, self.destination.sender_id)
@@ -940,12 +945,15 @@ class TestNotificationRule(unittest.TestCase):
 		self.assertEqual(frappe.db.get_value('Notification Queue', doc.name, 'delivery_status'), 'Sent')
 		args = dict(account=self.account, sender=self.destination.sender_id, source_type='Notification Queue', name=doc.name, receipt=row.client_receipt)
 		console.client_status(**args, status='Delivered')
-		proof = console.observe_message(**args)['receipt']
-		with self.assertRaises(frappe.PermissionError): console.client_status(**dict(args, receipt=proof), status='Read')
-		time.sleep(.72)
-		console.client_status(**dict(args, receipt=proof), status='Read')
-		doc.reload(); read_at = doc.read_at
-		console.client_status(**dict(args, receipt=proof), status='Read'); doc.reload()
+		issued = time.time()
+		with patch('messaging.emulator.provider.time.time', return_value=issued) as clock:
+			proof = console.observe_message(**args)['receipt']
+			with self.assertRaises(frappe.PermissionError):
+				console.client_status(**dict(args, receipt=proof), status='Read')
+			clock.return_value = issued + 1
+			console.client_status(**dict(args, receipt=proof), status='Read')
+			doc.reload(); read_at = doc.read_at
+			console.client_status(**dict(args, receipt=proof), status='Read'); doc.reload()
 		self.assertEqual((doc.delivery_status, doc.read_at), ('Read', read_at))
 		self.assertEqual({dt: frappe.db.count(dt) for dt in counts}, counts)
 		with self.assertRaises(frappe.PermissionError): console.simulate_notification(self.account, self.destination.sender_id, doc.name, status='Read')
@@ -962,7 +970,7 @@ from messaging.communication.doctype.notification_rule.notification_rule import 
 from messaging.communication.doctype.process_definition.test_process_definition import ProcessFixtures
 from messaging.registry.processes import register_processes
 
-from messaging.registrations.processes import NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse
+from messaging.registry.processes import NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse
 
 def prepare_condition(*, params, outcomes):
     outcomes.register('send', fields={'recipient': 'string'}, mode=['message', 'template'])
@@ -1010,7 +1018,7 @@ class TestEventConditions(unittest.TestCase):
             if row.get('output_mode') != 'Template':
                 row['output_mode'] = 'Template'
         rule = frappe.get_doc(dict(doctype='Notification Rule', notification_delay_minutes=60, rule_name='Condition ' + frappe.generate_hash(length=12),
-            source_application='messaging', source_doctype='Emulator Contact', enabled=1, account=account.name,
+            source_application='messaging', source_doctype='Emulator Contact', status='Enabled', account=account.name,
             events=rows or [dict(document_event='on_update',field_name='display_name',value='"Match"')],
             process_definition='messaging.technical_condition',
             process_invocation_mode='Internal Call (frappe.call)',
@@ -1175,7 +1183,7 @@ from messaging.communication.doctype.notification_rule.notification_rule import 
 from messaging.communication.doctype.notification_queue import dispatch
 from messaging.communication.doctype.process_definition import validation as process_testing
 from messaging.emulator.page.emulator_console import emulator_console as console
-from messaging.registrations.processes import NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse
+from messaging.registry.processes import NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse
 from messaging.registry.processes import register_processes
 
 
@@ -1270,6 +1278,8 @@ def probe_validate(envelope):
 
 
 def probe_destination(rule, account, recipient=None):
+    if recipient is not None:
+        return dict(effective_recipient=recipient, emulator_contact=None)
     row = next((r for r in rule.parameters if r.parameter_key == 'test_destination'), None)
     value = json.loads(row.value) if row and row.value else None
     if not value or not value.startswith('test:'):
@@ -1325,7 +1335,8 @@ class TestNotificationDelivery(unittest.TestCase):
         cls.network.start()
         set_provider_enabled('EMULR', True)
         if not frappe.db.exists('Communication Channel', 'emulator'):
-            ch = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Synthetic emulator', enabled=1)).insert()
+            ch = frappe.get_doc(dict(doctype='Communication Channel', provider='EMULR', channel_name='Synthetic emulator')).insert()
+            set_channel_status(ch.name, 'Enabled')
             cls.channels.append(ch.name)
         sync_communication_providers()
         from frappe.permissions import add_permission
@@ -1390,7 +1401,7 @@ class TestNotificationDelivery(unittest.TestCase):
     def tearDown(self):
         frappe.db.rollback();frappe.set_user('Administrator')
         for name in self.created_rules:
-            frappe.db.set_value('Notification Rule',name,'enabled',0,update_modified=False)
+            frappe.db.set_value('Notification Rule',name,'status','Disabled',update_modified=False)
         invalidate_rules();frappe.db.commit()
 
     def contact(self,label):
@@ -1440,7 +1451,7 @@ class TestNotificationDelivery(unittest.TestCase):
             tmpl = self.template(body='{{notice_text}}', account=account_doc)
             template_ref = tmpl.name
         outputs = values.pop('outputs', [dict(status_code='send', output_mode='Template', template_reference=template_ref, send=1)])
-        data=dict(doctype='Notification Rule',notification_delay_minutes=60,rule_name='Synthetic notice '+frappe.generate_hash(length=10),enabled=1,
+        data=dict(doctype='Notification Rule',notification_delay_minutes=60,rule_name='Synthetic notice '+frappe.generate_hash(length=10),status='Enabled',
             source_application='messaging',source_doctype='Emulator Contact',events=[dict(document_event='after_insert')],account=account,
             parameters=[dict(parameter_key='notification_contact',value=json.dumps(self.dest.name))],
             process_definition=process_definition,outputs=outputs,process_invocation_mode='Internal Call (frappe.call)')
@@ -1511,8 +1522,91 @@ class TestNotificationDelivery(unittest.TestCase):
         set_active(dict(name=template.name, modified=str(template.modified)), 0)
         frappe.db.commit()
         rule.reload()
-        self.assertEqual(rule.enabled, 0)
+        self.assertEqual(rule.status, 'Disabled')
         self.assertEqual(process_testing.test_state(rule), 'Untested')
+
+    def test_whatsapp_named_queue_uses_the_published_revision_until_it_changes(self):
+        from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
+        from messaging.communication.doctype.communication_template.communication_template import set_active
+        from messaging.communication.doctype.communication_template.external import synchronize_templates
+        from messaging.whatsapp import admin
+        from messaging.whatsapp.api import Graph
+
+        set_provider_enabled('WHATSAPP', True)
+        channel = frappe.get_doc(dict(doctype='Communication Channel', provider='WHATSAPP',
+            channel_name='Synthetic named notification channel', parameters=[
+                dict(parameter_key='app_id', value='"199001"'),
+                dict(parameter_key='app_secret', secret_value='synthetic-secret'),
+            ])).insert()
+        self.channels.append(channel.name)
+        admin.generate_webhook_token(channel.name, str(channel.modified))
+        set_channel_status(channel.name, 'Enabled')
+        account = frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel.name,
+            account_id='199002', account_name='Synthetic named notification account', enabled=1,
+            parameters=[
+                dict(parameter_key='waba_id', value='"199003"'),
+                dict(parameter_key='access_token', secret_value='synthetic-token'),
+            ])).insert()
+        self.accounts.append(account.name)
+        body = 'Hello {{nombre_abonado}}, account {{numero_contrato}}. Pay {{monto_pendiente}} ({{monto_pendiente}}).'
+        names = ('nombre_abonado', 'numero_contrato', 'monto_pendiente')
+        template = frappe.get_doc(dict(doctype='Communication Template', channel=channel.name, account=account.name,
+            template_name='Named delivery fixture', language='es', provider_language='es_HN', status='Inactive',
+            body=body, template_variables=[dict(parameter_name=key) for key in names], parameters=[
+                dict(parameter_key='parameter_format', value='"NAMED"'),
+            ])).insert()
+        self.templates.append(template.name)
+        frappe.db.commit()
+        remote = dict(id='199004', name='named_delivery_fixture', language='es_HN',
+            parameter_format='NAMED', category='UTILITY', status='APPROVED',
+            components=[dict(type='BODY', text=body)])
+        values = dict(nombre_abonado='Juan Pérez', numero_contrato='001245', monto_pendiente='L 850.00')
+        self.enterContext(patch.object(Graph, 'templates', side_effect=lambda *_: [remote]))
+        send = self.enterContext(patch.object(Graph, 'send', return_value=dict(messages=[dict(id='wamid.named_fixture')])))
+        self.assertTrue(synchronize_templates('WHATSAPP', channel.name, account.name)['success'])
+        template.reload()
+        set_active(dict(name=template.name, modified=str(template.modified)), 1)
+        template.reload()
+        first_revision = template.published_revision
+        response = NotifyResponse('send', data=dict(values, recipient='+15550000001', fecha_suspension='Tomorrow'))
+        _contract_response_box[0] = response
+        self.addCleanup(_contract_response_box.__setitem__, 0, None)
+        rule = self.rule(account=account.name, parameters=[], outputs=[
+            dict(status_code='send', send=1, template_reference=template.name), dict(status_code='skip', send=0),
+        ],
+            process_definition='messaging.test_delivery_contract_matrix')
+
+        template.body += ' Due {{fecha_suspension}}.'
+        template.append('template_variables', dict(parameter_name='fecha_suspension'))
+        template.save()
+        frappe.db.commit()
+        queue = self.prepare(rule)
+        exact_contract = queue.template_contract_json
+        self.assertEqual(queue.template_revision, first_revision)
+        self.assertEqual(json.loads(queue.variables_json), values)
+        self.assertEqual(json.loads(exact_contract)['delivery']['names']['body'],
+            {key: key for key in names})
+        remote['status'] = 'PAUSED'
+        self.assertEqual(self.due(queue)['state'], 'Deferred')
+        self.assertEqual(queue.reload().diagnostic_code, 'template_unavailable')
+        send.assert_not_called()
+
+        remote['status'] = 'APPROVED'
+        self.assertEqual(self.due(queue, extra=5)['state'], 'Accepted', queue.reload().diagnostic_code)
+        outgoing = send.call_args.args[0]['template']
+        self.assertEqual(outgoing['language'], {'code': 'es_HN'})
+        self.assertEqual(outgoing['components'][0]['type'], 'body')
+        parameters = outgoing['components'][0]['parameters']
+        self.assertEqual(len(parameters), 3)
+        self.assertEqual({row['parameter_name']: row['text'] for row in parameters}, values)
+
+        remote['components'][0]['text'] += ' Due {{fecha_suspension}}.'
+        self.assertEqual(synchronize_templates('WHATSAPP', channel.name, account.name)['updated'], 1)
+        self.assertNotEqual(template.reload().published_revision, first_revision)
+        self.assertNotEqual(rule.reload().test_state(), 'Passed')
+        self.assertEqual(dispatch.revalidate(queue), 'template_unavailable')
+        self.assertEqual((queue.reload().template_revision, queue.template_contract_json), (first_revision, exact_contract))
+        send.assert_called_once()
 
     def test_rule_destination_changes_disable_and_no_fallback(self):
         for change in ['destination','disabled_contact','rule_disabled']:
@@ -1528,7 +1622,7 @@ class TestNotificationDelivery(unittest.TestCase):
                 elif change=='disabled_contact':
                     self.dest.enabled=0;self.dest.save();frappe.db.commit()
                 else:
-                    rule.enabled=0;rule.save();frappe.db.commit()
+                    rule.status='Disabled';rule.save();frappe.db.commit()
                 with patch.object(emulator,'send',side_effect=AssertionError('Unsafe handoff')):
                     state=self.due(queue)['state']
                 self.assertIn(state,('Cancelled','Deferred'));queue.reload();self.assertFalse(queue.handoff_at)
@@ -1559,8 +1653,9 @@ class TestNotificationDelivery(unittest.TestCase):
         with registered_providers([emulator_definition(), deepcopy(PROBE)]):
             sync_communication_providers()
             set_provider_enabled('NTPRB',True)
-            channel=frappe.get_doc(dict(doctype='Communication Channel',provider='NTPRB',channel_name='Synthetic provider',enabled=1,
+            channel=frappe.get_doc(dict(doctype='Communication Channel',provider='NTPRB',channel_name='Synthetic provider',
                 parameters=[dict(parameter_key='channel_label',value='"Synthetic channel"')])).insert()
+            set_channel_status(channel.name, 'Enabled')
             self.channels.append(channel.name);frappe.db.commit()
             account=self.new_account(channel.name)
             self.source.display_name='Notify synthetic real-format-independent';self.source.save();frappe.db.commit()
@@ -1603,7 +1698,7 @@ class TestNotificationDelivery(unittest.TestCase):
         self.assertFalse(info['redirect_supported']);self.assertTrue(info['redirect_required']);self.assertNotIn('emulator_contact',info)
         account=self.new_account()
         self.assertTrue(emulator.resolve_account(account))
-        with self.assertRaises(frappe.ValidationError):notification_destination(frappe.get_doc(dict(doctype='Notification Rule', account=account.name, enabled=1, parameters=[])), account)
+        with self.assertRaises(frappe.ValidationError):notification_destination(frappe.get_doc(dict(doctype='Notification Rule', account=account.name, status='Enabled', parameters=[])), account)
         rule=self.rule();queue=self.prepare(rule)
         queue.delivery_mode='Normal'
         with self.assertRaises(frappe.PermissionError):queue.save(ignore_permissions=True)
@@ -1869,7 +1964,7 @@ class TestNotificationDelivery(unittest.TestCase):
         candidate_data=dict(
             doctype='Notification Rule',
             rule_name='Contract matrix '+frappe.generate_hash(length=8),
-            enabled=1,
+            status='Enabled',
             source_application='messaging',
             source_doctype='Emulator Contact',
             events=[dict(document_event='after_insert')],
@@ -1892,7 +1987,7 @@ class TestNotificationDelivery(unittest.TestCase):
         self.assertEqual(process_testing.test_state(rule),'Passed')
 
         # Reject missing, extra, null, int, float, bool, nested dict/list, empty/whitespace, and undeclared outcome
-        from messaging.registrations.processes import ProcessSchemaValidationError
+        from messaging.registry.processes import ProcessSchemaValidationError
         base_valid={
             'recipient':'',
             'nombre_abonado':'Juan Pérez',
@@ -1991,7 +2086,7 @@ class TestNotificationDelivery(unittest.TestCase):
         tmpl.header='Estimado cliente {{nombre_abonado}}'
         tmpl.save();frappe.db.commit()
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
         self.assertEqual(process_testing.test_state(rule),'Untested')
         with self.assertRaises(frappe.ValidationError):
             rule.require_approved()
@@ -2053,11 +2148,11 @@ class TestNotificationDelivery(unittest.TestCase):
         self.assertEqual(delivery_fingerprint(rule,destination),previous_delivery)
         self.assertEqual(process_testing.test_state(rule),'Untested')
         with self.assertRaises(frappe.ValidationError):rule.save()
-        rule.reload();rule.enabled=0;rule.notification_delay_minutes=2;rule.save()
+        rule.reload();rule.status='Disabled';rule.notification_delay_minutes=2;rule.save()
         self.assertEqual(process_testing.test_state(rule),'Untested')
         answer=process_testing.test_method(rule.as_dict())
         self.logs.append(answer['execution_log']);self.assertEqual(answer['status'],'Passed')
-        rule.enabled=1;rule.save();frappe.db.commit()
+        rule.status='Enabled';rule.save();frappe.db.commit()
         self.assertEqual(process_testing.test_state(rule),'Passed')
         queue.reload();self.assertEqual(queue.as_dict(),snapshot)
         source=self.contact('Notify synthetic changed delay')
@@ -2149,7 +2244,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         foreign.name = self.prefix + '_foreign'
         with self.assertRaises(frappe.PermissionError):
             synchronize(foreign)
-        rule.enabled = 1; rule.save()
+        rule.status = 'Enabled'; rule.save()
         for language in ('es', 'en'):
             with presentation_language(language):
                 self.assertEqual(selected_output(rule, 'ready').template_reference, references['es'])
@@ -2161,7 +2256,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         english = frappe.get_doc('Communication Template', references['es'])
         english.body = 'Changed English content'; english.save()
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
         self.assertEqual(test_state(rule), 'Untested')
         from messaging.communication.doctype.communication_template.communication_template import set_active
         with self.assertRaisesRegex(frappe.ValidationError, rule.name):
@@ -2172,7 +2267,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         self.assertEqual(test_state(rule), 'Passed')
         set_rule_active(dict(rule.as_dict()), 0)
         rule.reload()
-        self.assertEqual(rule.enabled, 0)
+        self.assertEqual(rule.status, 'Disabled')
         set_active(dict(name=english.name, modified=str(english.modified)), 0)
         english.reload()
         self.assertEqual(english.status, 'Inactive')
@@ -2192,7 +2287,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         synchronize(rule)
         rule.outputs[0].template_reference = template.name
         rule.insert()
-        self.assertFalse(rule.enabled)
+        self.assertEqual(rule.status, 'Disabled')
         rule.account = account
         with self.assertRaises(frappe.ValidationError):
             rule.save()
@@ -2273,12 +2368,12 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
             language='es', channel=frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name'), status='Active', body='Body')).insert()
         rule.outputs[0].template_reference = template.name
         self.approve(rule)
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.save()
         self.assertEqual(rule.process_test_status, 'Passed')
 
         # Change process definition
-        rule.enabled = 0
+        rule.status = 'Disabled'
         rule.process_definition = self.register('component_notification', 'notification')
         synchronize(rule)
         self.assertEqual(rule.process_test_status, 'Untested')
@@ -2297,7 +2392,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         template = frappe.get_doc(dict(doctype='Communication Template', template_name=self.prefix,
             language='es', channel=frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name'), status='Active', body='Body')).insert()
         rule.outputs[0].template_reference = template.name
-        rule.enabled = 0
+        rule.status = 'Disabled'
         rule.save()
 
         # Initial state should be Untested
@@ -2309,7 +2404,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         self.assertEqual(res['status'], 'Passed')
         self.assertEqual(res['lifecycle_status'], 'Enabled')
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
         self.assertEqual(rule.process_test_status, 'Passed')
 
         # State should be Enabled
@@ -2320,7 +2415,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         deact = set_active(rule.as_dict(), 0)
         self.assertEqual(deact['lifecycle_status'], 'Disabled')
         rule.reload()
-        self.assertEqual(rule.enabled, 0)
+        self.assertEqual(rule.status, 'Disabled')
         st = rule_state(rule.name)
         self.assertEqual(st['lifecycle_status'], 'Disabled')
 
@@ -2328,7 +2423,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         act = set_active(rule.as_dict(), 1)
         self.assertEqual(act['lifecycle_status'], 'Enabled')
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
         st = rule_state(rule.name)
         self.assertEqual(st['lifecycle_status'], 'Enabled')
 
@@ -2354,7 +2449,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
             footer='Thank you.', template_variables=[dict(parameter_name=key)
                 for key in ('contact_name', 'contract_code', 'pending_amount')])).insert()
         rule.outputs[0].template_reference = template.name
-        self.approve(rule); rule.enabled = 1; rule.save()
+        self.approve(rule); rule.status = 'Enabled'; rule.save()
         condition = canonical_conditions(rule)[0]
         for scenario in ('ordinary', 'literal', 'missing'):
             with patch.object(events, 'rule_index', return_value={}):
@@ -2404,7 +2499,7 @@ class TestPresetNotificationLifecycle(ProcessFixtures, unittest.TestCase):
         rule.outputs[0].output_mode = 'Template'
         rule.outputs[0].template_reference = template.name
         self.approve(rule)
-        rule.enabled = 1; rule.save()
+        rule.status = 'Enabled'; rule.save()
         condition = canonical_conditions(rule)[0]
         from frappe.share import add
         from messaging.security.service_identity import SERVICE_USER
@@ -2455,7 +2550,7 @@ class TestRegisteredNotificationRules(ProcessFixtures, unittest.TestCase):
             result = save_rule(**declaration)
             self.assertEqual(result['status'], 'created')
             rule = frappe.get_doc('Notification Rule', result['name'])
-            self.assertFalse(rule.enabled)
+            self.assertEqual(rule.status, 'Disabled')
             self.assertFalse(rule.outputs[0].send)
             self.assertFalse(rule.outputs[0].template_reference)
             self.assertEqual(rule.process_test_status, 'Untested')
@@ -2486,7 +2581,7 @@ class TestRegisteredNotificationRules(ProcessFixtures, unittest.TestCase):
         self.assertEqual(result['status'], 'updated')
         rule = frappe.get_doc('Notification Rule', declaration['key'])
         self.assertEqual(rule.notification_delay_minutes, 90)
-        self.assertFalse(rule.enabled)
+        self.assertEqual(rule.status, 'Disabled')
 
     def test_unknown_outcome_is_rejected_without_a_document(self):
         from messaging.communication.doctype.notification_rule.notification_rule import save_rule
@@ -2513,7 +2608,7 @@ def semantic_notification_result(request: NotifyRequest) -> NotifyResponse | Not
 class TestNotificationOutcomeSafety(ProcessFixtures, unittest.TestCase):
     """Documentary requirements and notification completion share the real Runtime."""
     def configured_rule(self):
-        from messaging.registrations.processes import NotifyProcess
+        from messaging.registry.processes import NotifyProcess
         from messaging.registry.processes import register_processes
         from messaging.communication.doctype.notification_rule.contract import synchronize
         rule, source = self.notification()
@@ -2555,7 +2650,7 @@ class TestNotificationOutcomeSafety(ProcessFixtures, unittest.TestCase):
         self.assertFalse(rule.outputs[0].template_reference)
         rule.outputs[0].send = 1
         rule.save()
-        self.assertFalse(rule.enabled)
+        self.assertEqual(rule.status, 'Disabled')
         frappe.db.set_value('Notification Outcome', rule.outputs[0].name, 'send', 1)
         rule.reload()
         with self.assertRaisesRegex(frappe.ValidationError, 'notice_ready'):
@@ -2571,13 +2666,13 @@ class TestNotificationOutcomeSafety(ProcessFixtures, unittest.TestCase):
         rule.outputs[0].send = 1
         rule.outputs[0].template_reference = template
         self.assertEqual(self.approve(rule)['status'], 'Passed')
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.save()
 
     def test_controlled_completion_and_real_failure_create_no_queue_and_distinct_logs(self):
         rule, source = self.configured_rule()
         self.assertEqual(self.approve(rule)['status'], 'Passed')
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.save()
         for scenario, expected in (('no_notice', 'No Result'), ('technical_failure', 'Internal Execution Error')):
             key = self.prepare(rule, source, scenario)
@@ -2602,7 +2697,7 @@ class TestNotificationOutcomeSafety(ProcessFixtures, unittest.TestCase):
     def test_pending_notice_losing_eligibility_is_cancelled_without_handoff(self):
         rule, source = self.configured_rule()
         self.approve(rule)
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.save()
         key = self.prepare(rule, source, 'ready')
         name = frappe.db.get_value('Notification Queue', {'occurrence_key': key}, 'name')
@@ -2622,7 +2717,7 @@ class TestNotificationOutcomeSafety(ProcessFixtures, unittest.TestCase):
         from messaging.security.execution_context import _authenticated_adapter
         rule, source = self.configured_rule()
         self.approve(rule)
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.save()
         key = self.prepare(rule, source, 'ready')
         name = frappe.db.get_value('Notification Queue', {'occurrence_key': key}, 'name')
@@ -2714,26 +2809,26 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         for row in rule.outputs:
             row.send = 0
             row.template_reference = None
-        rule.enabled = 0
+        rule.status = 'Disabled'
         rule.insert()
-        self.assertEqual(rule.enabled, 0)
+        self.assertEqual(rule.status, 'Disabled')
 
         # 1) Enabled rule without outputs -> rejected on insert, save, set_active, validate_process
         empty_rule = frappe.copy_doc(rule)
         empty_rule.rule_name = rule.rule_name + ' empty'
-        empty_rule.enabled = 1
+        empty_rule.status = 'Enabled'
         empty_rule.set('outputs', [])
         with self.assertRaises(frappe.ValidationError):
             empty_rule.insert()
         rule.reload()
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.set('outputs', [])
         with self.assertRaises(frappe.ValidationError):
             rule.save()
         rule.reload()
 
         # 2) Enabled rule with outputs, without template -> rejected
-        rule.enabled = 1
+        rule.status = 'Enabled'
         rule.outputs[0].send = 1
         rule.outputs[0].template_reference = None
         with self.assertRaises(frappe.ValidationError):
@@ -2746,7 +2841,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         rule.outputs[1].send = 0
         rule.outputs[1].template_reference = None
         rule.save()
-        rule.enabled = 1
+        rule.status = 'Enabled'
         with self.assertRaises(frappe.ValidationError):
             rule.save()
         rule.reload()
@@ -2755,7 +2850,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         with self.assertRaises(frappe.ValidationError):
             set_active(rule.as_dict(), 1)
         with self.assertRaises(frappe.ValidationError):
-            frappe.client.set_value('Notification Rule', rule.name, 'enabled', 1)
+            frappe.client.set_value('Notification Rule', rule.name, 'status', 'Enabled')
 
         # 4) Template ONLY on a non-sending output (skip_notice send=0 has template, notice_ready send=0 or missing) -> rejected
         rule.reload()
@@ -2783,7 +2878,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         res = validate_process(rule.as_dict())
         self.assertEqual(res['status'], 'Passed')
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
 
         # 7) Removing the last sendable output on an already-enabled rule -> save & db_update rejected, DB intact
         rule.outputs[0].send = 0
@@ -2795,7 +2890,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         with self.assertRaises(frappe.ValidationError):
             rule.db_update()
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
         self.assertEqual(rule.outputs[0].send, 1)
         self.assertEqual(rule.outputs[0].template_reference, tpl_es.name)
 
@@ -2821,7 +2916,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         # A single Spanish template is sufficient with Spanish and English configured.
         self.assertEqual(validate_process(rule.as_dict())['status'], 'Passed')
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
         tpl_en = self.make_template('lang', language='en')
         self.assertEqual(rule.test_state(), 'Passed')
 
@@ -2848,7 +2943,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         self.assertEqual(rule.test_state(remember_invalid=True), 'Passed')
         set_active(rule.as_dict(), 1)
         rule.reload()
-        self.assertEqual(rule.enabled, 1)
+        self.assertEqual(rule.status, 'Enabled')
 
         # 10) Process returning skip (send=0) or NotifyNoResponse creates ZERO Notification Queue rows
         nq_before = frappe.db.count('Notification Queue')
@@ -2875,7 +2970,7 @@ class TestNotificationRuleEnablementInvariants(ProcessFixtures, unittest.TestCas
         synchronize(skip_rule)
         skip_rule.outputs[0].send = 0
         skip_rule.outputs[0].template_reference = None
-        skip_rule.enabled = 0
+        skip_rule.status = 'Disabled'
         skip_rule.insert()
         with self.assertRaises(frappe.ValidationError):
             validate_process(skip_rule.as_dict())

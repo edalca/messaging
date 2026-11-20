@@ -27,7 +27,7 @@ def account_scope(account, *, operating=False):
 	if binding.channel != CHANNEL or frappe.db.get_value('Communication Channel', binding.channel, 'provider') != PROVIDER:
 		frappe.throw(_("Select a Channel Emulator account."), frappe.PermissionError)
 	if operating:
-		if not (get_provider_enabled(PROVIDER) and binding.enabled and frappe.db.get_value('Communication Channel', CHANNEL, 'enabled')):
+		if not (get_provider_enabled(PROVIDER) and binding.enabled and frappe.db.get_value('Communication Channel', CHANNEL, 'status') == 'Enabled'):
 			frappe.throw(_("The channel emulator is disabled. Enable its configuration to use it."), frappe.PermissionError)
 		require_provider_enabled(PROVIDER)
 		from messaging.communication.doctype.communication_channel_account.communication_channel_account import resolve_binding
@@ -49,7 +49,7 @@ def accounts():
 	bindings = frappe.get_list('Communication Channel Account', filters={'channel': CHANNEL}, fields=['name', 'account_id', 'account_name', 'enabled'], limit_page_length=500)
 	if frappe.db.get_value('Communication Channel', CHANNEL, 'provider') != PROVIDER:
 		bindings = []
-	return dict(enabled=get_provider_enabled(PROVIDER) and bool(frappe.db.get_value('Communication Channel', CHANNEL, 'enabled')), accounts=bindings)
+	return dict(enabled=get_provider_enabled(PROVIDER) and frappe.db.get_value('Communication Channel', CHANNEL, 'status') == 'Enabled', accounts=bindings)
 
 
 @frappe.whitelist()
@@ -127,7 +127,7 @@ def history(account, sender, session=None, before=None, notification_before=None
 				state = states[row.name]
 				row['processing'] = dict(state=state.inbox_state, status=state.status, diagnostic=state.inbox_diagnostic)
 	result['enabled'] = bool(get_provider_enabled(PROVIDER) and binding.enabled
-		and frappe.db.get_value('Communication Channel', CHANNEL, 'enabled')
+		and frappe.db.get_value('Communication Channel', CHANNEL, 'status') == 'Enabled'
 		and contact.enabled)
 	return result
 

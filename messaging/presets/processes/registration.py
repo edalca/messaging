@@ -1,5 +1,5 @@
 """Default registration Process declaration and handler."""
-from messaging.registrations.processes import BotParams, BotProcess, BotRequest, BotResponse, ProcessOutcomes
+from messaging.registry.processes import BotParams, BotProcess, BotRequest, BotResponse, ProcessOutcomes
 
 REGISTRATION_FLOW = 'messaging_registration'
 

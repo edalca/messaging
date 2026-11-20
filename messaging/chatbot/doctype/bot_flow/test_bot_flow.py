@@ -7,9 +7,9 @@ from unittest.mock import patch
 import frappe
 
 from messaging.communication.doctype.process_definition.test_process_definition import ProcessFixtures
-from messaging.communication.doctype.process_definition.validation import test_state
-from messaging.communication.doctype.process_definition.validation import ProcessSchemaValidationError, validate_process_schema_v1
-from messaging.registrations.processes import BotProcess, BotRequest, BotResponse
+from messaging.communication.doctype.process_definition.approval import is_current
+from messaging.registry.processes import ProcessSchemaValidationError, validate_process_schema_v1
+from messaging.registry.processes import BotProcess, BotRequest, BotResponse
 from messaging.registry.processes import register_processes
 from messaging.chatbot.doctype.bot_flow.contract import synchronize, validate_bindings, discover
 from messaging.chatbot.doctype.bot_flow.bot_flow import resolve_flow_output
@@ -44,7 +44,7 @@ class TestBotFlow(ProcessFixtures, unittest.TestCase):
             request_phrases=[dict(language='es',request_phrase='Please provide the contract.')])).insert()
         flow=frappe.new_doc('Bot Flow')
         flow.update(dict(workflow_code=self.prefix,workflow_name='Technical flow',semantic_description='Technical flow description',
-            process_definition=identifier,status='Disabled',priority=1001,
+            process_definition=identifier,priority=1001,
             input_initial_message='Provide the contract.',input_continuation_message='Provide the pending contract.'))
         from messaging.chatbot.doctype.bot_settings.bot_settings import resolve_process_language
         language=resolve_process_language()
@@ -123,7 +123,7 @@ class TestBotFlow(ProcessFixtures, unittest.TestCase):
         flow.menu_order = 37
         flow.show_in_menu = 1
         flow.save(); flow.reload()
-        self.assertEqual(test_state(flow), 'Passed')
+        self.assertTrue(is_current(flow))
         snapshot = [{key: value for key, value in row.as_dict().items() if key not in ('modified', 'modified_by')}
             for row in flow.translations + flow.input_translations]
         flow.show_in_menu = 0
@@ -160,7 +160,7 @@ class TestBotFlow(ProcessFixtures, unittest.TestCase):
         synchronize(flow)
         self.assertEqual([r.as_dict() for r in flow.parameters+flow.outputs],before)
         self.assertEqual(flow.process_contract_fingerprint,fingerprint)
-        self.assertEqual(test_state(flow),'Passed')
+        self.assertTrue(is_current(flow))
 
     def test_code_changes_add_rows_and_require_intervention_for_removals_and_type_changes(self):
         flow,parameter=self.configured();self.approve(flow)
@@ -203,9 +203,9 @@ class TestBotFlow(ProcessFixtures, unittest.TestCase):
         result=self.approve(flow)
         self.assertEqual(result['status'],'Passed',result)
         self.assertEqual(result['validation_scope'],'structural_contract')
-        self.assertEqual(test_state(flow),'Passed')
+        self.assertTrue(is_current(flow))
         flow.outputs[0].flow_action='Cancel Flow'
-        self.assertEqual(test_state(flow),'Untested')
+        self.assertFalse(is_current(flow))
         with self.assertRaises(frappe.ValidationError):flow.save()
         with self.assertRaises(frappe.ValidationError):
             self.activate(flow)
@@ -444,7 +444,7 @@ class TestIntegratedLocalization(ProcessFixtures, unittest.TestCase):
         self.assertEqual(get_request_phrase(flow.parameters[0].parameter),'Another reusable question')
         other.request_phrases[0].request_phrase='Saved question';other.save()
         self.assertEqual(get_request_phrase(other.name),'Saved question')
-        self.assertEqual(test_state(flow),'Passed')
+        self.assertTrue(is_current(flow))
 
     def test_input_message_plain_text_roundtrip_matches_parameter_phrases(self):
         self.languages(); flow, parameter = self.configured()
@@ -530,10 +530,10 @@ class TestIntegratedLocalization(ProcessFixtures, unittest.TestCase):
         finally:sys.setprofile(previous)
         self.assertEqual(calls,[])
         identity=flow.process_test_log
-        flow.reload();self.assertEqual(test_state(flow),'Passed')
+        flow.reload();self.assertTrue(is_current(flow))
         self.assertEqual(flow.process_test_log,identity)
         flow.input_translations[0].input_initial_message='A real content change'
-        self.assertEqual(test_state(flow),'Passed')
+        self.assertTrue(is_current(flow))
 
 
 class TestProcessAssignment(ProcessFixtures, unittest.TestCase):
@@ -596,62 +596,40 @@ class TestFlowLifecycle(ProcessFixtures, unittest.TestCase):
     template = TestBotFlow.template
     languages = TestBotFlow.languages
 
-    def test_failed_test_cannot_enable_or_create_approval(self):
-        from messaging.communication.doctype.process_definition import validation
+    def test_failed_validation_keeps_untested_and_records_result(self):
+        from messaging.communication.doctype.process_definition import execution
         from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
-        flow = self.flow(); flow.insert()
-        with patch.object(validation, 'execute_process', return_value=dict(functional=False,
+        flow = self.flow()
+        flow.insert()
+        with patch.object(execution, 'execute_process', return_value=dict(functional=False,
             status=None, execution_log=None, diagnostic='Synthetic structural failure')):
             result = validate_process(flow.as_dict())
         flow.reload()
         self.assertEqual(result['status'], 'Failed')
         self.assertEqual(result['message'], 'Synthetic structural failure')
-        self.assertEqual(flow.status, 'Disabled')
-        self.assertNotEqual(flow.process_test_status, 'Passed')
+        self.assertEqual(flow.status, 'Untested')
+        self.assertFalse(flow.approval_hash)
+        self.assertEqual(json.loads(flow.process_test_evidence)['result'], 'Failed')
 
-    def test_obsolete_candidate_and_changed_dependency_cannot_enable(self):
-        from messaging.communication.doctype.process_definition import validation
-        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process, set_active
-        flow, parameter = self.configured(); flow.insert()
-        candidate = flow.as_dict()
-        execute = validation.execute_process
-        def changed(*args, **kwargs):
-            result = execute(*args, **kwargs)
-            frappe.db.set_value('Bot Parameter', parameter.name, 'enabled', 0)
-            return result
-        with patch.object(validation, 'execute_process', side_effect=changed), self.assertRaises(frappe.TimestampMismatchError):
-            validate_process(candidate)
-        flow.reload()
-        self.assertEqual(flow.status, 'Disabled')
-        self.assertNotEqual(flow.process_test_status, 'Passed')
-        self.assertTrue(frappe.db.get_value('Bot Parameter', parameter.name, 'enabled'))
-        validate_process(flow.as_dict()); flow.reload()
-        with self.assertRaises(frappe.TimestampMismatchError):
-            validate_process(candidate)
-        self.activate(flow, False)
-        from messaging.communication.doctype.process_definition.process_definition import _registry_write
-        with _registry_write():
-            definition = frappe.get_doc('Process Definition', flow.process_definition)
-            definition.status = 'Unavailable'; definition.save()
-        with self.assertRaises(frappe.ValidationError):
-            set_active(flow.as_dict(), 1)
-        self.assertEqual(frappe.db.get_value('Bot Flow', flow.name, 'status'), 'Disabled')
-
-    def test_manual_activation_does_not_discover_configuration_or_run_tester(self):
+    def test_validation_enable_disable_and_stale_action(self):
         from messaging.chatbot.doctype.bot_flow.bot_flow import BotFlow, validate_process, set_active
         from messaging.communication.doctype.process_definition import validation
-        flow = self.flow(); flow.insert()
-        self.assertEqual(validate_process(flow.as_dict())['lifecycle_status'], 'Enabled')
-        flow.reload(); log = flow.process_test_log
-        self.activate(flow, False)
-        flow.workflow_name = 'Saved while administratively disabled'; flow.save(); flow.reload()
-        flow.onload()
-        self.assertEqual(flow.status, 'Disabled')
-        self.assertEqual(flow.get_onload('flow_lifecycle')['lifecycle_status'], 'Disabled')
-        with patch.object(validation, 'test_method', side_effect=AssertionError('No tester')), patch.object(
+        flow = self.flow()
+        flow.insert()
+        candidate = flow.as_dict()
+        with self.assertRaises(frappe.ValidationError):
+            set_active(candidate, 1)
+        self.assertEqual(validate_process(candidate)['consumer_status'], 'Disabled')
+        flow.reload()
+        evidence = (flow.approval_hash, flow.process_test_log, flow.approved_process_revision)
+        self.assertTrue(all(evidence))
+        with self.assertRaises(frappe.TimestampMismatchError):
+            set_active(candidate, 1)
+        with patch.object(validation, 'run_test', side_effect=AssertionError('No structural test')), patch.object(
             BotFlow, 'validate_configuration', side_effect=AssertionError('No save projection')):
-            self.assertEqual(set_active(flow.as_dict(), 1)['lifecycle_status'], 'Enabled')
-        flow.reload(); self.assertEqual(flow.process_test_log, log)
+            self.assertEqual(self.activate(flow)['consumer_status'], 'Enabled')
+            self.assertEqual(self.activate(flow, False)['consumer_status'], 'Disabled')
+        self.assertEqual((flow.approval_hash, flow.process_test_log, flow.approved_process_revision), evidence)
 
     def test_capture_messages_are_retained_and_semantics_always_required(self):
         from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process, message_requirements
@@ -660,7 +638,7 @@ class TestFlowLifecycle(ProcessFixtures, unittest.TestCase):
             input_continuation_message='Retained continuation'))
         flow.insert()
         self.assertEqual(message_requirements(flow.as_dict()), ['semantic_description'])
-        self.assertEqual(validate_process(flow.as_dict())['lifecycle_status'], 'Enabled')
+        self.assertEqual(validate_process(flow.as_dict())['consumer_status'], 'Disabled')
         flow.reload()
         self.assertEqual(flow.input_translations[0].input_initial_message, 'Retained start')
         self.assertEqual(flow.input_translations[0].input_continuation_message, 'Retained continuation')
@@ -690,171 +668,37 @@ class TestFlowLifecycle(ProcessFixtures, unittest.TestCase):
         self.assertEqual(meta.get_field('status').options.splitlines(), ['Untested', 'Disabled', 'Enabled', 'Unavailable'])
         self.assertFalse(meta.is_submittable)
 
-    def test_save_checks_configuration_without_approval_or_activation(self):
+    def test_save_ignores_forged_approval_and_rejects_status_edits(self):
         from messaging.communication.doctype.process_definition import validation
         flow, parameter = self.configured()
-        before = frappe.db.count('Process Execution Log')
-        with patch.object(validation, 'test_method', side_effect=AssertionError('Save must not validate')):
+        flow.approval_hash = 'forged'
+        with patch.object(validation, 'run_test', side_effect=AssertionError('Save must not validate')):
             flow.insert()
-        self.assertEqual(flow.lifecycle_status, 'Untested')
-        self.assertEqual(flow.status, 'Disabled')
-        self.assertEqual(frappe.db.count('Process Execution Log'), before)
-        flow.update(dict(process_test_status='Passed'))
-        flow.save()
-        self.assertEqual(flow.lifecycle_status, 'Untested')
+        self.assertEqual(flow.status, 'Untested')
+        self.assertFalse(flow.approval_hash)
         flow.status = 'Enabled'
-        flow.flags.messaging_bot_flow_lifecycle = True
         with self.assertRaises(frappe.PermissionError):
             flow.save()
-        from frappe.client import set_value
-        with self.assertRaises(frappe.PermissionError):
-            set_value('Bot Flow', flow.name, 'status', 'Enabled')
-        self.assertEqual(frappe.db.get_value('Bot Flow', flow.name, 'status'), 'Disabled')
-        response = set_value('Bot Flow', flow.name, 'status', 'Unavailable')
-        self.assertEqual(response['status'], 'Disabled')
 
-    def test_validation_enables_and_manual_deactivation_preserves_evidence(self):
+    def test_text_keeps_receipt_and_capture_changes_require_explicit_revalidation(self):
         from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process, set_active
-        flow, parameter = self.configured()
-        with self.assertRaises(frappe.ValidationError):
-            validate_process(flow.as_dict())
-        flow.insert()
-        with self.assertRaises(frappe.ValidationError):
-            set_active(flow.as_dict(), 1)
-        dirty = flow.as_dict()
-        dirty['workflow_name'] = 'Unsaved change'
-        with self.assertRaises(frappe.ValidationError):
-            validate_process(dirty)
-        self.assertEqual(validate_process(flow.as_dict())['status'], 'Passed')
-        flow.reload()
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        log = flow.process_test_log
-        self.activate(flow)
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.activate(flow, False)
-        self.assertEqual(flow.lifecycle_status, 'Disabled')
-        self.assertEqual(flow.process_test_log, log)
-        self.assertEqual(test_state(flow), 'Passed')
-        self.activate(flow)
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertEqual(flow.process_test_log, log)
-        dirty = flow.as_dict()
-        dirty['workflow_name'] = 'Another unsaved change'
-        with self.assertRaises(frappe.ValidationError):
-            set_active(dirty, 0)
-
-    def test_desk_omitted_null_fields_validate_without_accepting_unsaved_changes(self):
-        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process, set_active
-        flow, parameter = self.configured()
-        flow.insert()
-
-        def desk(value):
-            if isinstance(value, dict):
-                return {key: desk(item) for key, item in value.items() if item is not None}
-            if isinstance(value, list):
-                return [desk(item) for item in value]
-            return value
-
-        candidate = desk(flow.as_dict())
-        self.assertNotIn('internal_error_message', candidate)
-        self.assertNotIn('retry_parameter', candidate['outputs'][0])
-        missing = desk(flow.as_dict())
-        del missing['parameters'][0]['parameter']
-        with self.assertRaises(frappe.ValidationError):
-            validate_process(missing)
-        changed = desk(flow.as_dict())
-        changed['outputs'][0]['flow_action'] = 'Show Menu'
-        with self.assertRaises(frappe.ValidationError):
-            validate_process(changed)
-        self.assertEqual(validate_process(candidate)['status'], 'Passed')
-        flow.reload()
-        log = flow.process_test_log
-        self.assertEqual(set_active(desk(flow.as_dict()), 1)['lifecycle_status'], 'Enabled')
-        flow.reload()
-        self.assertEqual(set_active(desk(flow.as_dict()), 0)['lifecycle_status'], 'Disabled')
-        flow.reload()
-        self.assertEqual(flow.process_test_log, log)
-
-    def test_text_edits_preserve_active_state_and_technical_receipt(self):
         flow, parameter = self.configured()
         self.assertEqual(self.approve(flow)['status'], 'Passed')
-        self.activate(flow)
-        log = flow.process_test_log
-        flow.workflow_name = 'An updated menu fallback'
-        flow.translations[0].semantic_description = 'Updated semantic description'
-        flow.translations[0].menu_label = 'Updated menu label'
-        flow.translations[0].menu_description = 'Updated menu description'
-        flow.input_translations[0].input_initial_message = 'Updated initial question'
-        flow.input_translations[0].input_continuation_message = 'Updated continuation question'
-        parameter.reload()
-        parameter.request_phrases[0].request_phrase = 'Updated contract question'
-        parameter.save()
+        previous_hash, previous_log = flow.approval_hash, flow.process_test_log
+        flow.workflow_name = 'Updated description'
         flow.save()
-        flow.reload()
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertEqual(flow.status, 'Enabled')
-        self.assertEqual(flow.process_test_log, log)
-        self.assertEqual(test_state(flow), 'Passed')
-
-    def test_capture_contract_change_requires_explicit_validation_and_enables(self):
-        flow, parameter = self.configured()
-        self.approve(flow)
-        self.activate(flow)
-        old_log = flow.process_test_log
+        self.assertEqual((flow.status, flow.approval_hash), ('Enabled', previous_hash))
         flow.parameters[0].maximum_values = 2
         flow.save()
-        self.assertEqual(flow.lifecycle_status, 'Untested')
-        self.assertEqual(flow.status, 'Disabled')
+        self.assertEqual((flow.status, flow.approval_hash, flow.process_test_log),
+            ('Unavailable', previous_hash, previous_log))
         with self.assertRaises(frappe.ValidationError):
-            self.activate(flow)
-        self.assertEqual(self.approve(flow)['status'], 'Passed')
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertNotEqual(flow.process_test_log, old_log)
-        self.activate(flow)
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-
-    def test_runtime_detects_stale_code_and_reversion_does_not_restore_approval(self):
-        from messaging.communication.doctype.process_definition import validation
-        from messaging.chatbot.doctype.bot_flow.bot_flow import state
-        flow = self.flow()
-        self.approve(flow)
-        self.activate(flow)
-        old_log = flow.process_test_log
-        key = validation._invalidation_key(flow)
-        self.keys.add(key)
-        with patch.object(validation, '_registered_runtime', return_value='changed-code'), \
-             patch.object(validation, 'runtime_revision', return_value='changed-code'):
-            self.assertEqual(state(flow.name)['lifecycle_status'], 'Untested')
-            result = self.execute(flow)
-            self.assertFalse(result['functional'])
-        self.assertEqual(state(flow.name)['lifecycle_status'], 'Untested')
-        self.assertEqual(self.approve(flow)['status'], 'Passed')
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertNotEqual(flow.process_test_log, old_log)
-        self.activate(flow)
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.network_mock.assert_not_called()
-
-    def test_template_text_preserves_approval_but_operational_changes_invalidate(self):
-        self.languages()
-        flow, parameter = self.configured()
-        template = self.template()
-        flow.outputs[0].output_mode = 'Template'
-        flow.append('output_translations', dict(language='es', status_code='success', template_reference=template.name))
-        self.approve(flow)
-        self.activate(flow)
-        log = flow.process_test_log
-        template.body = 'Updated wording for {{contract}}'
-        template.save()
-        flow.save()
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertEqual(flow.process_test_log, log)
-        template.enabled = 0
-        template.save()
-        from messaging.chatbot.doctype.bot_flow.bot_flow import state
-        from messaging.communication.doctype.process_definition.validation import _invalidation_key
-        self.keys.add(_invalidation_key(flow))
-        self.assertEqual(state(flow.name)['lifecycle_status'], 'Untested')
+            set_active(flow.as_dict(), 1)
+        self.assertEqual(validate_process(flow.as_dict())['consumer_status'], 'Disabled')
+        flow.reload()
+        self.assertNotEqual(flow.approval_hash, previous_hash)
+        self.assertNotEqual(flow.process_test_log, previous_log)
+        self.assertTrue(is_current(flow))
 
 
 class TestDefinitionReplacement(ProcessFixtures, unittest.TestCase):
@@ -904,7 +748,7 @@ class TestDefinitionReplacement(ProcessFixtures, unittest.TestCase):
         flow.save(); flow.reload()
         self.assertEqual(flow.process_definition, identifier); self.assertFalse(flow.parameters)
         self.assertEqual(flow.outputs[0].status_code, 'not_found')
-        self.assertEqual(test_state(flow), 'Untested'); self.assertFalse(flow.process_test_log)
+        self.assertFalse(is_current(flow)); self.assertTrue(flow.process_test_log)
         self.assertTrue(frappe.db.exists('Process Execution Log', old_log))
 
     def test_server_rejects_foreign_handler_snapshot_and_functional_rows(self):

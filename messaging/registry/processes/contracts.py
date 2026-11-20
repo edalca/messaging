@@ -114,7 +114,7 @@ def _field_value(kind, value):
 
 
 def validate_output_data(fields, data):
-    if set(fields) != set(data) or any(not _field_value(kind, data[name]) for name, kind in fields.items()):
+    if any(name not in fields or not _field_value(fields[name], value) for name, value in data.items()):
         raise ProcessSchemaValidationError(_('Process result does not match the selected output fields.'))
 
 

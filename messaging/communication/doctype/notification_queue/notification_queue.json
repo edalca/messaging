@@ -34,6 +34,7 @@
   "template_reference",
   "provider_template_reference",
   "template_revision",
+  "template_contract_json",
   "column_break_snapshot",
   "delivery_mode",
   "delivery_fingerprint",
@@ -150,7 +151,7 @@
   },
   {
    "fieldname": "recipient",
-   "fieldtype": "Data",
+   "fieldtype": "Code",
    "label": "Original Recipient",
    "read_only": 1
   },
@@ -351,7 +352,8 @@
   },
   {
    "fieldname": "provider_template_reference",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
+   "options": "Communication Template",
    "label": "Provider Template Reference",
    "read_only": 1
   },
@@ -359,6 +361,13 @@
    "fieldname": "template_revision",
    "fieldtype": "Data",
    "label": "Content Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "template_contract_json",
+   "fieldtype": "Long Text",
+   "label": "Published Template Contract",
+   "hidden": 1,
    "read_only": 1
   },
   {

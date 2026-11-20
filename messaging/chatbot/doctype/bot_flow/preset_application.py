@@ -5,7 +5,7 @@ import json
 import frappe
 from frappe import _
 
-from .bot_flow import apply_default, existing_default, _preset_write, _lifecycle_write
+from .bot_flow import apply_default, existing_default, _preset_write
 from .configuration import _available_languages
 from .contract import default_contract
 from .localization import TEXT_FIELDS, INPUT_FIELDS
@@ -136,16 +136,8 @@ def apply_preset(preset, definition, active, *, reset=False):
             flow.update(prepared.get('options', {}))
             flow.set('parameters', [])
             flow.set('outputs', [])
-    if flow and (replace_common or reset_languages or state['pending_languages']):
-        with _lifecycle_write():
-            flow.status = 'Disabled'
-            flow.process_test_status = 'Untested'
-            flow.process_test_evidence = None
-            flow.process_test_fingerprint = None
-            status, name, warnings = apply_default(prepared, flow, active, discovered, app=preset.application,
-                replace_common=replace_common)
-    else:
-        status, name, warnings = apply_default(prepared, flow, active, discovered, app=preset.application)
+    status, name, warnings = apply_default(prepared, flow, active, discovered, app=preset.application,
+        replace_common=replace_common)
     flow = frappe.get_doc('Bot Flow', name)
     flow.check_permission('write')
     actual = snapshot(flow)

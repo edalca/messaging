@@ -66,7 +66,8 @@ def validate_values(doc, *, operational=False, check_required=None):
 			doc.append('parameters', dict(parameter_key=key, value=json.dumps(normalize(p, p['default_value']))))
 			seen.add(key)
 	if check_required is None:
-		check_required = operational or (doc.status == 'Active' if doc.doctype == 'Communication Template' else doc.get('enabled'))
+		active_status = {'Communication Channel': 'Enabled', 'Communication Template': 'Active', 'Notification Rule': 'Enabled'}.get(doc.doctype)
+		check_required = operational or (doc.status == active_status if active_status else doc.get('enabled'))
 	if check_required:
 		rows = {r.parameter_key: r for r in doc.parameters}
 		for key, p in parameters.items():

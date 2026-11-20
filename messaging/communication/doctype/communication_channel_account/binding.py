@@ -24,7 +24,7 @@ def resolve_ingress_binding(provider, account):
 	require_provider_enabled(provider)
 	binding = frappe.get_doc('Communication Channel Account', account)
 	channel = frappe.get_doc('Communication Channel', binding.channel)
-	if channel.provider != provider or not channel.enabled or not binding.enabled:
+	if channel.provider != provider or channel.status != 'Enabled' or not binding.enabled:
 		frappe.throw(_("Invalid or disabled channel account."), frappe.PermissionError)
 	# Validation may fill defaults in memory, but never saves documents.
 	validate_values(channel, operational=True)
