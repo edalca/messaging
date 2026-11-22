@@ -500,7 +500,7 @@ def run_handler(definition, context, execution):
 
 
 def source_document(rule, arguments, *, administrative_test):
-	"""Explicit persisted reference, permissions and exact configured condition only."""
+	"""Load the persisted source and verify the exact configured condition."""
 	if (
 		set(arguments) != {"doctype", "name", "event", "occurrence"}
 		or arguments["doctype"] != rule.source_doctype
@@ -512,7 +512,6 @@ def source_document(rule, arguments, *, administrative_test):
 	if meta.istable or meta.issingle or meta.is_virtual:
 		raise frappe.ValidationError(_("Invalid Process source document."))
 	doc = frappe.get_doc(rule.source_doctype, arguments["name"])
-	doc.check_permission("read")
 	if not rule._match_source_condition(doc, arguments["event"], arguments["occurrence"]):
 		raise frappe.ValidationError(_("Select a configured event condition matching the source document."))
 	if administrative_test:
@@ -523,7 +522,7 @@ def source_document(rule, arguments, *, administrative_test):
 			and doc.docstatus != 2
 		):
 			raise frappe.ValidationError(_("Source document state does not match the selected event."))
-	# Field permissions apply to the snapshot as well as document read permission.
+	# Field permissions still apply to the snapshot used for parameter projection.
 	doc.apply_fieldlevel_read_permissions()
 	return _freeze(doc.as_dict())
 

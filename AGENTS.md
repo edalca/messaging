@@ -222,7 +222,9 @@ Static inspection also rejects UI output from Process code.
 
 The handler owns business document selection, operations, validation, and
 response data. Messaging adds no business document or field permission checks
-to native server-side APIs used by the handler. Frappe applies the permission
+to native server-side APIs used by the handler. The runtime loads the source of
+an authorized document event without requiring business document read permission
+from the service identity. Frappe applies the permission
 behavior of the selected API, including explicit `frappe.has_permission()` and
 `doc.check_permission()` calls. The service identity needs only the permissions
 required by Messaging itself and by the operations that the handler chooses.

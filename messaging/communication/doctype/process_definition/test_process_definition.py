@@ -1159,33 +1159,108 @@ class TestUnifiedProcessAPI(ProcessFixtures, unittest.TestCase):
         another.outputs[0].name=rule.outputs[0].name
         with self.assertRaises(frappe.PermissionError):synchronize(another)
 
-    def test_automated_template_preparation_keeps_native_source_permissions(self):
+    def approved_source_rule(self, *, function='technical_notification', conditions=None):
         from messaging.communication.doctype.notification_rule.contract import synchronize
-        from messaging.communication.doctype.notification_rule.events import prepare
+        rule, source = self.notification(conditions=conditions)
+        if function != 'technical_notification':
+            rule.process_definition = self.register(function, 'notification')
+        synchronize(rule)
+        template = frappe.get_doc(dict(
+            doctype='Communication Template', channel='emulator', status='Active',
+            template_name=self.prefix, language='es', body='Approved synthetic template.',
+        )).insert()
+        for output in rule.outputs:
+            output.send = int(output.status_code in ('ready', 'send'))
+            output.template_reference = template.name if output.send else None
+        result = self.approve(rule)
+        self.assertEqual(result['status'], 'Passed', result)
+        self.assertEqual(rule.status, 'Enabled')
+        return rule, source
+
+    def test_automated_document_events_load_the_source_without_read_permission(self):
+        from copy import copy
+
+        from messaging.communication.doctype.notification_rule import events
+        from messaging.security.execution_context import _automation_context
+
+        get_meta = frappe.get_meta
+
+        def submittable_meta(doctype, *args, **kwargs):
+            meta = get_meta(doctype, *args, **kwargs)
+            if doctype == 'ToDo':
+                meta = copy(meta)
+                meta.is_submittable = 1
+            return meta
+
+        methods = ('on_update', 'on_submit', 'on_cancel')
+        with patch('frappe.get_meta', side_effect=submittable_meta):
+            rule, source = self.approved_source_rule(
+                function='empty_notification',
+                conditions=[dict(document_event=method) for method in methods],
+            )
+            with _automation_context():
+                self.assertFalse(frappe.has_permission(source.doctype, 'read', doc=source))
+            with patch.object(events, 'rule_index', return_value={'ToDo': {method: [rule.name] for method in methods}}):
+                source.save()
+                source.submit()
+                source.cancel()
+                events.observe(source, 'on_cancel')  # The occurrence has already been claimed.
+
+            for method in methods:
+                with self.subTest(event=method):
+                    filters = dict(notification_rule=rule.name, source_name=source.name, document_event=method)
+                    self.assertEqual(frappe.db.count('Notification Queue', filters), 1)
+                    queue = frappe.get_doc('Notification Queue', filters)
+                    log = frappe.get_doc('Process Execution Log', queue.execution_log)
+                    self.assertEqual((log.execution_outcome, log.functional_status), ('Functional Status', 'ready'))
+                    self.assertEqual(log.source_event, method)
+                    self.assertEqual(queue.prepared_text, 'Approved synthetic template.')
+        self.network_mock.assert_not_called()
+
+    def test_document_context_rejects_invalid_sources_and_preserves_explicit_reads(self):
+        from messaging.communication.doctype.notification_rule import events
         from messaging.communication.doctype.notification_rule.conditions import canonical_conditions, condition_token
         from messaging.security.execution_context import _automation_context
-        from messaging.security.service_identity import SERVICE_USER
-        from messaging.common.primitives import utcnow
-        rule,source=self.notification()
-        rule.process_definition=self.register('empty_notification','notification')
-        synchronize(rule)
-        template=frappe.get_doc(dict(doctype='Communication Template',channel=frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name'), status='Active',
-            template_name=self.prefix,language='es', body='Approved synthetic template.')).insert()
-        rule.outputs[0].template_reference=template.name
-        self.approve(rule);rule.enabled=1;rule.save()
-        condition=canonical_conditions(rule)[0]
-        key=self.prefix+'-denied'
+
+        rule, source = self.approved_source_rule()
+        arguments = dict(doctype=source.doctype, name=source.name, event='on_update',
+            occurrence=condition_token(canonical_conditions(rule)[0]))
+
+        def execute(arguments):
+            result = process.execute_process(
+                process_method=rule.process_method, arguments=arguments,
+                source_type='Notification Rule', source_name=rule.name,
+            )
+            self.assertEqual(result['state'], 'Failed')
+            return frappe.get_doc('Process Execution Log', result['execution_log'])
+
         with _automation_context():
-            prepare(rule,source,'on_update',condition_token(condition),key,utcnow(),condition=condition)
-        self.assertFalse(frappe.db.exists('Notification Queue',{'occurrence_key':key}))
-        # Share only this synthetic source document; no service role is broadened.
-        from frappe.share import add
-        add('ToDo',source.name,user=SERVICE_USER,read=1,notify=0)
-        key=self.prefix+'-allowed'
-        with _automation_context():
-            prepare(rule,source,'on_update',condition_token(condition),key,utcnow(),condition=condition)
-        queue=frappe.get_doc('Notification Queue',{'occurrence_key':key})
-        self.assertEqual(queue.prepared_text,'Approved synthetic template.')
+            for overrides, error in (
+                (dict(name=self.prefix + '_missing'), 'DoesNotExistError'),
+                (dict(doctype='Role'), 'ValidationError'),
+                (dict(event='on_cancel'), 'ValidationError'),
+                (dict(occurrence='invalid'), 'ValidationError'),
+            ):
+                with self.subTest(overrides=overrides):
+                    log = execute(arguments | overrides)
+                    self.assertEqual(log.diagnostic_error_type, error)
+                    self.assertIn('during context', log.diagnostic_detail)
+        try:
+            frappe.set_user('Guest')
+            log = execute(arguments)
+            self.assertEqual(log.diagnostic_error_type, 'PermissionError')
+            self.assertIn('during authorization', log.diagnostic_detail)
+        finally:
+            frappe.set_user('Administrator')
+        with patch.object(events, 'rule_index', return_value={'ToDo': {'on_update': [rule.name]}}):
+            source.save()
+        log = frappe.get_doc('Process Execution Log', dict(source_name=rule.name, source_document=source.name))
+        self.assertEqual(log.diagnostic_error_type, 'PermissionError')
+        self.assertIn('during invocation', log.diagnostic_detail)
+        error = frappe.db.get_value('Error Log', log.frappe_error_log, 'error')
+        self.assertIn('in notification_business', error)
+        self.assertIn('in read_reference', error)
+        self.assertFalse(frappe.db.exists('Notification Queue', dict(notification_rule=rule.name, source_name=source.name)))
         self.network_mock.assert_not_called()
 
 
