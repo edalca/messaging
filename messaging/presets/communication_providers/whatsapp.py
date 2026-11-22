@@ -28,7 +28,7 @@ def definition() -> CommunicationProvider:
 			Parameter(VERIFY_TOKEN, 'Webhook Verify Token', 'Password', 'Channel', required=True),
 			Parameter('graph_version', 'Graph API Version', 'Select', 'Channel', required=True,
 				options='\n'.join(SUPPORTED_VERSIONS), default_value=DEFAULT_VERSION),
-			Parameter('waba_id', 'WhatsApp Business Account ID', 'Data', 'Account', required=True),
+			Parameter('waba_id', 'Messaging Account ID', 'Data', 'Account', required=True),
 			Parameter('access_token', 'Meta Access Token', 'Password', 'Account', required=True),
 			Parameter('parameter_format', 'Provider Parameter Format', 'Select', 'Template', options='\n'.join(FORMAT_CODES)),
 			Parameter('notification_phone_number', 'Test Destination Number', 'Data', 'Notification Rule', required=True,

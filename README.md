@@ -121,33 +121,77 @@ Use English source strings with Frappe's translation conventions, and add Spanis
 
 Provider code and process handlers are resolved from verified installed applications. Channel ingress and delivery reports are authenticated and scoped to their channel account. Desk access follows Frappe permissions and account or assignment scope. Configure credentials through the relevant Password fields and keep credentials, site settings, and internal evidence out of the repository.
 
+## Public information by channel
+
+A System Manager can maintain public legal information on the **Public
+Information** tab of a saved Communication Channel. Enter the legal entity or
+organization, public service name and contact email. Add an official website,
+additional contact details and a service description where applicable.
+The details come from this tab.
+
+The tab offers **Privacy Policy**, **Terms of Service** and **Data Deletion
+Instructions**. Open **Edit Draft**, optionally load the Spanish standard
+template, then edit and save. Complete any sections marked for review and
+use **Preview Draft** to review the saved content and contact details.
+Confirm **Publish** to make that document available. Publication stores a
+copy of the reviewed content and contact details. Later edits take effect
+when you explicitly publish the updated draft. **Withdraw Publication**
+requires confirmation and removes public access while retaining the draft.
+
+Public URLs use the same configured HTTPS origin as the WhatsApp webhook.
+Set the site's Frappe `host_name` to its public origin, such as
+`https://messaging.example.com`. Messaging also accepts the configured
+`hostname` fallback. **Copy Public URL** becomes available for each published
+document when a valid public origin is configured. The routes use the immutable
+channel ID and end in `privacy-policy`, `terms-of-service` and `data-deletion`
+under `/messaging/<channel>/`. Published pages are available without login
+and remain available when the channel is disabled.
+
+For a WhatsApp channel, copy each applicable URL into the corresponding
+Privacy Policy URL, Terms of Service URL or Data Deletion Instructions URL
+field in the app's Meta Developers dashboard. The deletion page describes
+how to submit a request. The organization handles requests through its
+authorized procedures.
+
 ## WhatsApp Cloud API
 
 Messaging includes a native WhatsApp provider. Install or migrate Messaging with
 Bench to register it, then enable **WhatsApp** in Communication Provider.
+Manage Meta apps, phone numbers, permissions, app publication and webhook
+subscriptions in Meta Developers. Messaging configures the integration,
+exposes the webhook endpoint and handles incoming and outgoing communications.
 
 1. Create one Communication Channel for each Meta App and webhook. Enter the
    unique Meta App ID, the App Secret and the Graph API version, which defaults
-   to `v25.0`. Save the channel and select **Generate Token** in **Meta Webhook**.
+   to `v27.0`. Save the channel and select **Generate verification token** under
+   **Webhook Actions**.
    The Webhook Verify Token field is read-only. Enable the channel after
-   completing the required settings. Use **Copy Token** to configure webhook
-   verification in Meta. After using **Regenerate Token**, update it in Meta. All numbers
-   on the channel use this webhook configuration. Signed POST events require the
-   Meta App Secret.
-2. Create an enabled Communication Channel Account for each Meta number. Use the
-   **Phone Number ID** as the immutable **Account ID**. Enter the WhatsApp
-   Business Account ID and the account's Meta access token in Provider
-   Parameters. Use the account actions to verify connectivity and inspect or
-   explicitly create the WABA subscription.
+   completing the required settings and setting the public HTTPS origin in step 3.
+   Use **Copy verification token** to configure webhook verification in Meta.
+   After using **Regenerate verification token**, update it in Meta Developers.
+   All numbers on the channel use this
+   webhook configuration. Signed POST events require the Meta App Secret.
+2. Create a Communication Channel Account for each Meta number. Enter the
+   immutable **Phone Number ID**, the **Messaging Account ID**, and the number's
+   Meta access token. Select **Check and enable** to verify the Phone Number ID
+   and save the display number returned by Meta. **General** includes a status
+   summary. **Diagnostics** retains the latest connection check, subscription
+   query and signed message webhook evidence for that number. Failed checks
+   also remain available after reload. Relevant configuration changes mark
+   earlier evidence as historical. Use **WhatsApp Actions** to check the
+   connection or query the configured Messaging Account's subscribed apps.
+   The subscription query is read-only. Multiple numbers can share a Messaging
+   Account ID and retain independent diagnostics. Disabling an account only
+   changes local status.
 3. Set the site's Frappe `host_name` to its public HTTPS origin. Open the saved
-   channel and use **Copy URL** in **Meta Webhook** to enter its callback in the
+   channel and use **Copy webhook URL** under **Webhook Actions** to enter its callback in the
    configured app in Meta Developers. The
    `/api/method/messaging.whatsapp.webhook.handler` route uses the saved channel
    ID in its `channel` query parameter. Enter letters and spaces in **Channel
    Name**. New channels use a lowercase ASCII ID with underscores between
    words unless the provider assigns a fixed ID. Editing the display name
    preserves the ID and callback URL.
-   Subscribe to `messages` and `message_template_status_update`.
+   Subscribe to `messages` and `message_template_status_update` in Meta Developers.
    Configure the reverse proxy to limit the webhook request body to 3 MiB and
    omit the verify-token query string from access logs.
 4. Open **Synchronize templates** in the Communication Template list and select

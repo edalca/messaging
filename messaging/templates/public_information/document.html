@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="{{ language | e }}">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>{{ title | e }}{% if content.service %} · {{ content.service | e }}{% endif %}</title>
+	<link rel="stylesheet" href="/assets/messaging/css/public_information.css">
+</head>
+<body>
+	<main>
+		<header>
+			{% if preview %}<p class="preview">{{ _("Draft Preview") | e }}</p>{% endif %}
+			{% if content.service %}<p class="service">{{ content.service | e }}</p>{% endif %}
+			<h1>{{ title | e }}</h1>
+			{% if content.organization %}<p>{{ content.organization | e }}</p>{% endif %}
+			{% if content.updated %}
+				<p class="updated">{{ _("Last Updated") | e }} <time datetime="{{ content.updated | e }}">{{ content.updated | e }}</time></p>
+			{% endif %}
+		</header>
+		<article>
+			{{ content.body | safe }}
+		</article>
+		{% if content.email or content.website or content.contact or links %}
+		<footer>
+			<h2>{{ _("Contact") | e }}</h2>
+			{% if content.email %}<p><a href="{{ mail_link | e }}">{{ content.email | e }}</a></p>{% endif %}
+			{% if content.website %}<p><a href="{{ content.website | e }}">{{ content.website | e }}</a></p>{% endif %}
+			{% if content.contact %}<p class="contact-details">{{ content.contact | e }}</p>{% endif %}
+			{% if links %}
+			<nav aria-label="{{ _('Public Documents') | e }}">
+				{% for link in links %}<a href="{{ link.path | e }}">{{ link.title | e }}</a>{% endfor %}
+			</nav>
+			{% endif %}
+		</footer>
+		{% endif %}
+	</main>
+</body>
+</html>

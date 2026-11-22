@@ -1,0 +1,44 @@
+{% if document == 'privacy-policy' %}
+<h2>Responsable del tratamiento</h2>
+<p>La organización identificada en esta página es responsable del tratamiento de la información que recibe mediante este servicio de mensajería.</p>
+<h2>Información que recibimos</h2>
+<p>Al comunicarse con el servicio, usted comparte su identificador de mensajería y el contenido de los mensajes que decide enviar.</p>
+<p>[Por completar: indique qué otros datos recibe el servicio, según su funcionamiento real.]</p>
+<h2>Finalidades del tratamiento</h2>
+<p>[Por completar: describa para qué utiliza la organización la información y, cuando corresponda, la base aplicable.]</p>
+<h2>Servicios externos de mensajería</h2>
+<p>El proveedor de mensajería interviene en la entrega de las comunicaciones. Su propio tratamiento puede estar sujeto a sus condiciones y política de privacidad.</p>
+<p>[Por completar: identifique los proveedores que intervienen y explique qué información se comparte con ellos y para qué.]</p>
+<h2>Conservación</h2>
+<p>[Por completar: indique los plazos o criterios de conservación que aplica la organización a estos datos.]</p>
+<h2>Seguridad</h2>
+<p>[Por completar: describa de forma general las medidas aplicadas para proteger la información.]</p>
+<h2>Acceso, rectificación y eliminación</h2>
+<p>Si desea solicitar acceso a su información, pedir que se corrija o solicitar su eliminación, cuando corresponda, escriba a la dirección de contacto de esta página. Indique qué solicita y cómo se comunicó con el servicio para facilitar la búsqueda.</p>
+<h2>Contacto</h2>
+<p>Puede dirigir sus preguntas sobre esta política a la organización mediante los datos de contacto indicados al pie de esta página.</p>
+{% elif document == 'terms-of-service' %}
+<h2>Identificación del servicio</h2>
+<p>Estas condiciones se aplican al servicio de mensajería identificado en esta página y administrado por la organización indicada.</p>
+<h2>Alcance de la comunicación</h2>
+<p>{{ (description or '[Por completar: describa las consultas y gestiones que admite el servicio.]') | e }}</p>
+<h2>Uso permitido</h2>
+<p>Utilice el canal para las gestiones descritas y facilite únicamente la información pertinente para su solicitud. Respete los derechos de otras personas al compartir contenido.</p>
+<h2>Disponibilidad y limitaciones</h2>
+<p>[Por completar: indique los horarios, el alcance de la atención y los límites que correspondan al servicio.]</p>
+<h2>Responsabilidades</h2>
+<p>[Por completar: describa las responsabilidades respectivas de la organización y de las personas usuarias según el servicio y las normas aplicables.]</p>
+<h2>Cambios en las condiciones</h2>
+<p>Consulte esta página para conocer las condiciones vigentes y su fecha de actualización.</p>
+<h2>Contacto</h2>
+<p>Para consultas sobre estas condiciones, utilice los datos de contacto al pie de esta página.</p>
+{% elif document == 'data-deletion' %}
+<h2>Dónde presentar su solicitud</h2>
+<p>Escriba al correo de contacto de esta página e indique que desea solicitar la eliminación de información relacionada con este servicio de mensajería.</p>
+<h2>Qué información incluir</h2>
+<p>Indique el número o identificador con el que se comunicó, el canal utilizado y, si la recuerda, la fecha aproximada de la conversación. Describa los datos que solicita eliminar. Evite enviar contraseñas, códigos de verificación o documentos de identidad por iniciativa propia.</p>
+<h2>Cómo se atiende la solicitud</h2>
+<p>Con esos datos, la organización puede localizar la información y evaluar la solicitud. Si hace falta verificar su identidad o aclarar el alcance de la petición, podrán solicitarle información adicional por el medio de contacto correspondiente.</p>
+<h2>Conservación cuando corresponda</h2>
+<p>Si una obligación legal u otra limitación aplicable exige conservar parte de la información, la eliminación puede quedar limitada a los datos que puedan suprimirse.</p>
+{% endif %}

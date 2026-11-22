@@ -1,0 +1,75 @@
+:root {
+	color-scheme: light;
+	font: 100%/1.65 system-ui, sans-serif;
+	color: #243348;
+	background: #f1f5f8;
+}
+
+body {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+main {
+	box-sizing: border-box;
+	max-width: 52rem;
+	margin: clamp(0rem, 4vw, 3rem) auto;
+	padding: clamp(1.25rem, 5vw, 3.5rem);
+	background: #fff;
+	border-top: .3rem solid #23665f;
+}
+
+header {
+	padding-bottom: 1.5rem;
+	border-bottom: 1px solid #d5dee8;
+}
+
+h1, h2, h3, h4 {
+	line-height: 1.2;
+	color: #14263d;
+}
+
+h1 {
+	margin: .25rem 0 .75rem;
+	font-size: clamp(1.9rem, 5vw, 3rem);
+}
+
+h2 {
+	margin: 1.75rem 0 .5rem;
+	font-size: 1.25rem;
+}
+
+p {
+	margin: 0 0 .75rem;
+}
+
+.service, .preview {
+	font-weight: 600;
+	color: #23665f;
+}
+
+.updated {
+	color: #47596c;
+	font-size: .9rem;
+}
+
+a {
+	color: #14554f;
+	text-underline-offset: .15em;
+}
+
+footer {
+	margin-top: 2rem;
+	border-top: 1px solid #d5dee8;
+}
+
+nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5rem 1.25rem;
+	margin-top: 1.25rem;
+}
+
+.contact-details {
+	white-space: pre-line;
+}

@@ -4,6 +4,7 @@
  "module": "Communication",
  "engine": "InnoDB",
  "field_order": [
+  "general_tab",
   "provider",
   "channel_name",
   "column_break_channel",
@@ -15,6 +16,7 @@
   "meta_webhook_section",
   "meta_webhook_token",
   "meta_webhook_details",
+  "meta_webhook_evidence",
   "section_quotas",
   "quotas_enabled",
   "daily_quota_limit",
@@ -28,9 +30,29 @@
   "section_courtesy",
   "quota_courtesy_enabled",
   "column_break_courtesy",
-  "quota_courtesy_max_per_cycle"
+  "quota_courtesy_max_per_cycle",
+  "public_information_tab",
+  "public_organization_section",
+  "public_organization",
+  "public_service",
+  "public_email",
+  "public_contact_column",
+  "public_website",
+  "public_contact",
+  "public_description",
+  "public_documents_section",
+  "public_documents_controls",
+  "public_privacy_draft",
+  "public_terms_draft",
+  "public_deletion_draft",
+  "public_document_snapshots"
  ],
  "fields": [
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
   {
    "fieldname": "provider",
    "fieldtype": "Link",
@@ -97,6 +119,13 @@
   {
    "fieldname": "meta_webhook_details",
    "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "meta_webhook_evidence",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "read_only": 1,
+   "permlevel": 1
   },
   {
    "fieldname": "section_quotas",
@@ -182,6 +211,85 @@
    "fieldtype": "Int",
    "label": "Max Courtesy Notices Per Quota Cycle",
    "mandatory_depends_on": "eval:doc.quota_courtesy_enabled"
+  },
+  {
+   "fieldname": "public_information_tab",
+   "fieldtype": "Tab Break",
+   "label": "Public Information"
+  },
+  {
+   "fieldname": "public_organization_section",
+   "fieldtype": "Section Break",
+   "label": "Public Organization Details"
+  },
+  {
+   "fieldname": "public_organization",
+   "fieldtype": "Data",
+   "label": "Legal Entity or Organization"
+  },
+  {
+   "fieldname": "public_service",
+   "fieldtype": "Data",
+   "label": "Public Service Name"
+  },
+  {
+   "fieldname": "public_email",
+   "fieldtype": "Data",
+   "label": "Public Contact Email",
+   "options": "Email"
+  },
+  {
+   "fieldname": "public_contact_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "public_website",
+   "fieldtype": "Data",
+   "label": "Official Website"
+  },
+  {
+   "fieldname": "public_contact",
+   "fieldtype": "Small Text",
+   "label": "Additional Public Contact Details"
+  },
+  {
+   "fieldname": "public_description",
+   "fieldtype": "Small Text",
+   "label": "Public Service Description"
+  },
+  {
+   "fieldname": "public_documents_section",
+   "fieldtype": "Section Break",
+   "label": "Public Documents"
+  },
+  {
+   "fieldname": "public_documents_controls",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "public_privacy_draft",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "public_terms_draft",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "public_deletion_draft",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "public_document_snapshots",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "read_only": 1,
+   "no_copy": 1
   }
  ],
  "permissions": [

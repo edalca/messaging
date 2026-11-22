@@ -35,6 +35,7 @@ from messaging.registry.processes import (
 from messaging.registry.processes import register_processes
 from messaging.whatsapp.api import Graph, GraphError
 from messaging.whatsapp.provider import normalize_e164_phone
+from messaging.whatsapp.test_whatsapp import enable_fixture_account
 
 
 INVALID_ORIGINAL = "<invalid recipient> " * 12
@@ -137,7 +138,8 @@ class TestNotificationRuleStatusAndRedirect(unittest.TestCase):
 					],
 				)
 			).insert()
-		set_channel_status(self.wa_channel.name, "Enabled")
+		with patch.dict(frappe.conf, host_name="https://wa.example.com"):
+			set_channel_status(self.wa_channel.name, "Enabled")
 		self.channels.append(self.wa_channel.name)
 		self.wa_account = frappe.get_doc(
 			dict(
@@ -145,7 +147,6 @@ class TestNotificationRuleStatusAndRedirect(unittest.TestCase):
 				channel=self.wa_channel.name,
 				account_id=str(810000000000 + int(frappe.generate_hash(length=5), 16) % 899999),
 				account_name=self.prefix + " WA Account",
-				enabled=1,
 				parameters=[
 					dict(parameter_key="waba_id", value='"770011223344"'),
 					dict(parameter_key="access_token", secret_value="synthetic-access-token"),
@@ -153,6 +154,7 @@ class TestNotificationRuleStatusAndRedirect(unittest.TestCase):
 			)
 		).insert()
 		self.accounts.append(self.wa_account.name)
+		enable_fixture_account(self.wa_account)
 
 		self.emulr_template = frappe.get_doc(
 			dict(

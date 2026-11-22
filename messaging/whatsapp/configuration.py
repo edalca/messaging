@@ -1,14 +1,26 @@
 """WhatsApp configuration on Messaging channel, account and template documents."""
 import json
+from urllib.parse import quote, urlencode
+
 import frappe
 from frappe.utils.password import get_decrypted_password
 
+from messaging.common.public_origin import configured_public_origin
 from messaging.common.write_guards import InternalWriteGuard
 from messaging.whatsapp.api import DEFAULT_VERSION, Graph, numeric_id, version_valid
 
 PROVIDER = 'WHATSAPP'
 VERIFY_TOKEN = 'verify_token'
+WEBHOOK_PATH = '/api/method/messaging.whatsapp.webhook.handler'
 webhook_token_write = InternalWriteGuard('messaging_whatsapp_webhook_token_write')
+
+
+def callback_url(channel):
+	"""Build the Meta callback from the configured public origin and saved channel ID."""
+	origin = configured_public_origin()
+	if origin:
+		query = urlencode({'channel': channel}, quote_via=quote)
+		return f'{origin}{WEBHOOK_PATH}?{query}'
 
 
 def value(doc, key, default=None):
@@ -69,6 +81,11 @@ def validate_channel(doc, method=None):
 			frappe.throw(frappe._('This Meta App ID is already configured on another WhatsApp channel.'))
 	if not version_valid(graph_version(doc)):
 		frappe.throw(frappe._('Invalid WhatsApp Graph API version.'))
+	if doc.status == 'Enabled' and (not previous_doc or previous_doc.status != 'Enabled'):
+		if not callback_url(doc.name):
+			frappe.throw(frappe._('Configure a public HTTPS site origin before enabling the WhatsApp channel.'))
+		if not all(secret(doc, key) for key in ('app_secret', VERIFY_TOKEN)):
+			frappe.throw(frappe._('Configure the Meta App Secret and webhook verify token before enabling the WhatsApp channel.'))
 	if not webhook_token_write.active():
 		row = verify_token_row(doc)
 		previous = verify_token_row(previous_doc)
@@ -77,8 +94,13 @@ def validate_channel(doc, method=None):
 
 
 def validate_account(doc, method=None):
+	previous = doc.get_doc_before_save()
+	if (doc.whatsapp_display_phone_number or '') != ((previous.whatsapp_display_phone_number or '') if previous else ''):
+		frappe.throw(frappe._('Only a successful Meta lookup can change the WhatsApp number.'), frappe.PermissionError)
 	if frappe.db.get_value('Communication Channel', doc.channel, 'provider') != PROVIDER:
 		return
+	if bool(doc.enabled) != bool(previous and previous.enabled):
+		frappe.throw(frappe._('Change the WhatsApp account status using its administrative actions.'), frappe.PermissionError)
 	business = value(doc, 'waba_id')
 	if not numeric_id(doc.account_id) or (business is not None and not numeric_id(business)):
-		frappe.throw(frappe._('Use numeric Meta IDs for the WhatsApp account and WABA.'))
+		frappe.throw(frappe._('Use numeric values for the Phone Number ID and Messaging Account ID.'))

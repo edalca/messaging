@@ -10,11 +10,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 import frappe
+from frappe.app import run_after_response_callbacks
+from frappe.utils import CallbackManager
 import requests
 from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
 
 from messaging.common.primitives import utcnow
+from messaging.communication.doctype.communication_channel import webhook_evidence
 from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.communication.doctype.communication_provider.communication_provider import (
 	handoff,
@@ -26,7 +29,7 @@ from messaging.presets.communication_providers.whatsapp import definition
 from messaging.registry.communication_providers import register_communication_providers
 from messaging.whatsapp import admin, provider, templates, webhook
 from messaging.whatsapp.api import DEFAULT_VERSION, SUPPORTED_VERSIONS, Graph, GraphError
-from messaging.whatsapp.configuration import PROVIDER, graph_version, verify_token_row
+from messaging.whatsapp.configuration import PROVIDER, graph_version, secret, verify_token_row
 
 
 class TestGraph(unittest.TestCase):
@@ -60,7 +63,21 @@ class TestGraph(unittest.TestCase):
 			with self.assertRaises(GraphError) as failure:
 				self.graph.send({})
 			self.assertFalse(failure.exception.rejected)
+			self.assertTrue(failure.exception.transport)
 			request.assert_called_once()
+
+	def test_phone_lookup_rejects_unexpected_success_responses(self):
+		cases = (b'not JSON', b'[]', b'{"data":[]}', b'{"id":"201","display_phone_number":"123"}',
+			b'{"id":"101"}', b'{"id":"101","display_phone_number":123}')
+		with patch('messaging.whatsapp.api.requests.request') as request:
+			response = request.return_value.__enter__.return_value
+			response.status_code = 200
+			for raw in cases:
+				with self.subTest(raw=raw), self.assertRaises(GraphError) as failure:
+					response.iter_content.return_value = [raw]
+					self.graph.phone_info()
+				self.assertFalse(failure.exception.transport)
+				self.assertIsNone(failure.exception.code)
 
 	def test_pagination_uses_cursor_and_ignores_next_destination(self):
 		with patch.object(self.graph, '_request', side_effect=[
@@ -100,31 +117,40 @@ class TestGraph(unittest.TestCase):
 				response.iter_content.return_value = [b'{"messages":[{"id":"wamid.test"}]}']
 				for payload in messages:
 					graph.send(payload)
+				phone = {'id': '101', 'display_phone_number': '+1 555 0100'}
+				response.iter_content.return_value = [json.dumps(phone).encode()]
+				self.assertEqual(graph.phone_info(), phone)
 				response.iter_content.return_value = [b'{"data":[]}']
-				self.assertEqual(graph.phone_info(), [])
 				self.assertEqual(graph.templates('notice'), [])
-				self.assertEqual(graph.subscriptions(), [])
 				response.iter_content.return_value = [b'{"success":true}']
-				for method in ('POST', 'DELETE'):
-					self.assertTrue(graph.subscription(method)['success'])
 				graph.save_template(create)
 				graph.save_template(update, '301')
 
 				root = f'https://graph.facebook.com/{version}'
 				self.assertEqual([exchange.args for exchange in request.call_args_list],
 					[('POST', f'{root}/101/messages')] * len(messages) + [
-						('GET', f'{root}/201/phone_numbers'), ('GET', f'{root}/201/message_templates'),
-						('GET', f'{root}/201/subscribed_apps'), ('POST', f'{root}/201/subscribed_apps'),
-						('DELETE', f'{root}/201/subscribed_apps'), ('POST', f'{root}/201/message_templates'),
+						('GET', f'{root}/101'), ('GET', f'{root}/201/message_templates'),
+						('POST', f'{root}/201/message_templates'),
 						('POST', f'{root}/301'),
 					])
+				self.assertEqual(request.call_args_list[len(messages)].kwargs['params'],
+					{'fields': 'id,display_phone_number'})
 				self.assertEqual([exchange.kwargs['json'] for exchange in request.call_args_list[:len(messages)]],
 					[dict(messaging_product='whatsapp', **payload) for payload in messages])
 				self.assertEqual([exchange.kwargs['json'] for exchange in request.call_args_list[-2:]], [create, update])
 
 
+def enable_fixture_account(doc):
+	with patch.object(Graph, '_request', return_value=dict(id=doc.account_id, display_phone_number='+1 555 0100')):
+		result = admin.account_action(doc.name, 'enable', str(doc.modified))
+	if result['result'] != 'confirmed':
+		raise AssertionError(result['interpretation'])
+	return doc.reload()
+
+
 class TestWhatsApp(unittest.TestCase):
 	def setUp(self):
+		self.enterContext(patch.dict(frappe.conf, host_name='https://wa.example.com'))
 		frappe.set_user('Administrator')
 		self.addCleanup(frappe.set_user, 'Administrator')
 		self.addCleanup(frappe.db.rollback)
@@ -136,7 +162,7 @@ class TestWhatsApp(unittest.TestCase):
 		self.second = self.account('123450002', '202', 'second')
 		self.third = self.account('123450003', '201', 'first', self.first.channel)
 
-	def account(self, phone, business, key, channel=None):
+	def account(self, phone, business, key, channel=None, *, enabled=True):
 		if channel is None:
 			doc = frappe.get_doc(dict(doctype='Communication Channel', provider=PROVIDER,
 				channel_name=f'WhatsApp protocol fixture {key}', parameters=[
@@ -147,19 +173,27 @@ class TestWhatsApp(unittest.TestCase):
 			with patch.object(admin.secrets, 'token_urlsafe', return_value=key + '-verify'):
 				admin.generate_webhook_token(channel, str(doc.modified))
 			set_channel_status(channel, 'Enabled')
-		return frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel,
-			account_id=phone, account_name='WhatsApp protocol fixture', enabled=1, parameters=[
+		doc = frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel,
+			account_id=phone, account_name='WhatsApp protocol fixture', parameters=[
 				dict(parameter_key='access_token', secret_value=phone + '-synthetic'),
 				dict(parameter_key='waba_id', value=json.dumps(business)),
 			])).insert()
 
-	def request(self, account, *, query=None, data=None, signature=''):
+		return enable_fixture_account(doc) if enabled else doc
+
+	def request(self, account, *, query=None, data=None, signature='', record_evidence=False):
 		params = {'channel': account.channel, **(query or {})}
 		req = Request(EnvironBuilder(method='POST' if data is not None else 'GET',
 			query_string=params, data=data, content_type='application/json',
 			headers={'X-Hub-Signature-256': signature}).get_environ())
 		with patch.object(frappe.local, 'request', req, create=True):
-			return webhook.handler()
+			if not record_evidence:
+				return webhook.handler()
+			req.after_response = CallbackManager()
+			reply = webhook.handler()
+			with patch.object(frappe.db, 'commit'):
+				run_after_response_callbacks()
+			return reply
 
 	def payload(self, phone=None, business='201', **fields):
 		return json.dumps(dict(object='whatsapp_business_account', entry=[dict(id=business, changes=[
@@ -173,9 +207,250 @@ class TestWhatsApp(unittest.TestCase):
 	def test_registration_and_guest_permissions(self):
 		self.assertEqual(definition().id, self.definition['id'])
 		self.assertIn('send', provider_definition('EMULR')['operations'])
+		for method, http in ((admin.account_action, 'POST'), (admin.disable_account, 'POST'),
+			(admin.account_diagnostics, 'GET')):
+			self.assertEqual(frappe.allowed_http_methods_for_whitelisted_func[method], [http])
 		frappe.set_user('Guest')
 		with self.assertRaises(frappe.PermissionError):
-			admin.account_action(self.first.name, 'subscribe')
+			admin.account_action(self.first.name, 'check', str(self.first.modified))
+		with self.assertRaises(frappe.PermissionError):
+			admin.account_diagnostics(self.first.name)
+		with self.assertRaises(frappe.PermissionError):
+			admin.disable_account(self.first.name, str(self.first.modified))
+
+	def action(self, doc, action, **kwargs):
+		doc.reload()
+		return admin.account_action(doc.name, action, str(doc.modified), **kwargs)
+
+	def test_admin_phone_diagnostics_use_exact_number_and_redact_errors(self):
+		with (patch('messaging.whatsapp.api.requests.request') as request,
+			patch.object(frappe, 'log_error') as log_error):
+			response = request.return_value.__enter__.return_value
+			response.status_code = 200
+			response.iter_content.return_value = [json.dumps(dict(id=self.first.name,
+				display_phone_number='+1 555 0101', access_token='private-token')).encode()]
+			result = self.action(self.first, 'check')
+			self.assertEqual(result['result'], 'confirmed')
+			self.assertEqual(result['response']['data'], dict(id=self.first.name, display_phone_number='+1 555 0101'))
+			self.assertEqual(result['request']['parameters'], {'fields': 'id,display_phone_number'})
+			self.assertTrue(result['request']['endpoint'].endswith('/' + self.first.name))
+			self.assertNotIn('private-token', str(result))
+			self.assertEqual(self.first.reload().whatsapp_display_phone_number, '+1 555 0101')
+
+			response.status_code = 400
+			cases = (
+				(100, None, 'resource does not support'),
+				(100, 33, 'resource is unavailable'),
+				(190, 460, 'did not accept the access token'),
+				(10, None, 'does not have the permissions'),
+			)
+			for code, subcode, description in cases:
+				with self.subTest(code=code, subcode=subcode):
+					trace = 'Ab0123_ABcd4567efGH'
+					response.iter_content.return_value = [json.dumps(dict(error=dict(
+						code=code, error_subcode=subcode, message='Bearer private-token <script>',
+						error_user_msg='private-app-secret', fbtrace_id=trace,
+					))).encode()]
+					result = self.action(self.first, 'check')
+					self.assertEqual(result['result'], 'meta_rejected')
+					self.assertEqual(result['response'], dict(http_status=400, data={}, meta_code=code,
+						meta_subcode=subcode, trace_id=trace))
+					self.assertIn(description, result['interpretation'])
+					self.assertNotIn('private-', str(result))
+					self.assertNotIn('<script>', str(result))
+					self.assertTrue(result['request']['endpoint'].endswith('/' + self.first.name))
+
+			calls = request.call_count
+			for retired in ('subscribe', 'unsubscribe'):
+				with self.subTest(retired=retired), self.assertRaisesRegex(frappe.ValidationError, 'Invalid WhatsApp operation'):
+					self.action(self.first, retired)
+			self.assertEqual(request.call_count, calls)
+
+			request.side_effect = requests.ConnectionError('private-token')
+			result = self.action(self.first, 'check')
+			self.assertEqual(result['result'], 'network_error')
+			self.assertNotIn('private-token', str(result))
+			self.assertTrue(self.first.reload().enabled)
+			log_error.assert_not_called()
+
+	def test_account_diagnostics_persist_failures_and_merge_operations(self):
+		from frappe.client import set_value
+
+		doc = self.account('123450004', '201', 'first', self.first.channel, enabled=False)
+		self.assertFalse(doc.last_diagnostics)
+		form = frappe.get_doc(doc.doctype, doc.name)
+		with patch('messaging.whatsapp.api.requests.request') as request:
+			response = request.return_value.__enter__.return_value
+			response.status_code = 429
+			response.iter_content.return_value = [b'{"error":{"message":"private-first-failure"}}']
+			first = self.action(doc, 'check')
+			self.assertEqual(first['result'], 'inconclusive')
+			self.assertEqual(admin.account_diagnostics(doc.name)['results']['connection']['checked_at'], first['checked_at'])
+			self.assertNotIn('private-first-failure', str(doc.reload().last_diagnostics))
+
+			def subscription_during_check(*args, **kwargs):
+				with patch.object(Graph, '_request', return_value={'data': []}):
+					self.assertEqual(self.action(doc, 'subscription')['result'], 'not_subscribed')
+				return dict(id=doc.account_id, display_phone_number='+1 555 0101')
+
+			with patch.object(Graph, '_request', side_effect=subscription_during_check):
+				confirmed = self.action(doc, 'check')
+			saved = admin.account_diagnostics(doc.name)['results']
+			self.assertEqual(set(saved), {'connection', 'subscription'})
+			self.assertEqual(saved['connection']['checked_at'], confirmed['checked_at'])
+			self.assertNotEqual(confirmed['checked_at'], first['checked_at'])
+			self.assertFalse(saved['connection']['stale'])
+
+			response.status_code = 400
+			response.iter_content.return_value = [b'{"error":{"code":100}}']
+			rejected = self.action(doc, 'check')
+			before = request.call_count
+			saved = admin.account_diagnostics(doc.name)['results']
+			self.assertEqual(request.call_count, before)
+			self.assertEqual(saved['connection']['result'], 'meta_rejected')
+			self.assertEqual(saved['connection']['checked_at'], rejected['checked_at'])
+			self.assertEqual(saved['subscription']['result'], 'not_subscribed')
+
+		form.reload()
+		form.last_diagnostics = '{"forged":true}'
+		form.account_name = 'Renamed fixture'
+		form.save()
+		self.assertEqual(admin.account_diagnostics(doc.name)['results'], saved)
+		frappe.set_user('Guest')
+		with self.assertRaises(frappe.PermissionError):
+			set_value(doc.doctype, doc.name, 'last_diagnostics', '{"forged":true}')
+		frappe.set_user('Administrator')
+		doc.reload()
+		next(row for row in doc.parameters if row.parameter_key == 'access_token').secret_value = 'replacement-token'
+		doc.save()
+		historical = admin.account_diagnostics(doc.name)['results']
+		self.assertTrue(historical['connection']['stale'])
+		self.assertTrue(historical['subscription']['stale'])
+		self.assertEqual(historical['connection']['checked_at'], rejected['checked_at'])
+		self.assertFalse(admin.account_diagnostics(self.third.name)['results']['connection']['stale'])
+		self.assertNotIn('subscription', admin.account_diagnostics(self.third.name)['results'])
+
+	def test_subscription_diagnostics_use_the_business_and_a_complete_sanitized_list(self):
+		with patch('messaging.whatsapp.api.requests.request') as request:
+			response = request.return_value.__enter__.return_value
+			response.status_code = 200
+			page = dict(data=[dict(whatsapp_business_api_data=dict(id='7', name='private-app-name'),
+				override_callback_uri='https://example.invalid/private')], paging=dict(
+				next='https://example.invalid/?access_token=private', cursors=dict(after='synthetic-cursor')))
+			second_page = dict(data=[dict(whatsapp_business_api_data=dict(id=self.first.name))])
+			response.iter_content.side_effect = [[json.dumps(payload).encode()] for payload in (page, second_page)]
+			result = self.action(self.first, 'subscription')
+			self.assertEqual(result['result'], 'confirmed')
+			self.assertEqual(result['response']['data'], dict(app_ids=['7', self.first.name], app_count=2))
+			self.assertEqual(result['request']['technical_id'], '201')
+			endpoint = f'https://graph.facebook.com/{DEFAULT_VERSION}/201/subscribed_apps'
+			self.assertEqual([call.args for call in request.call_args_list], [('GET', endpoint)] * 2)
+			self.assertEqual(request.call_args.kwargs['params']['after'], 'synthetic-cursor')
+			self.assertNotIn('private', str(self.first.reload().last_diagnostics))
+			self.assertNotIn('synthetic-cursor', str(self.first.last_diagnostics))
+
+			response.iter_content.side_effect = None
+			for http, payload, status in (
+				(200, {'data': []}, 'not_subscribed'),
+				(200, {'data': [{'whatsapp_business_api_data': {}}]}, 'inconclusive'),
+				(400, {'error': {'code': 100, 'message': 'private-error'}}, 'meta_rejected'),
+			):
+				with self.subTest(status=status):
+					response.status_code = http
+					response.iter_content.return_value = [json.dumps(payload).encode()]
+					result = self.action(self.first, 'subscription')
+					self.assertEqual(result['result'], status)
+					saved = admin.account_diagnostics(self.first.name)['results']['subscription']
+					self.assertEqual(saved['result'], status)
+					self.assertEqual(saved['checked_at'], result['checked_at'])
+			self.assertEqual(saved['response']['meta_code'], 100)
+			self.assertIn('Meta code 100', saved['interpretation'])
+			self.assertNotIn('private-error', str(self.first.reload().last_diagnostics))
+			self.assertTrue(all(call.args == ('GET', endpoint) for call in request.call_args_list))
+
+		business = next(row for row in self.first.parameters if row.parameter_key == 'waba_id')
+		business.value = '"203"'
+		self.first.save()
+		saved = admin.account_diagnostics(self.first.name)['results']['subscription']
+		self.assertTrue(saved['stale'])
+		self.assertEqual(saved['request']['technical_id'], '201')
+
+	def test_account_enable_disable_and_protected_identity(self):
+		from frappe.client import set_value
+
+		doc = self.account('123450004', '201', 'first', self.first.channel, enabled=False)
+		self.assertFalse(doc.whatsapp_display_phone_number)
+		with self.assertRaises(frappe.PermissionError):
+			set_value(doc.doctype, doc.name, 'enabled', 1)
+		with self.assertRaises(frappe.PermissionError):
+			set_value(doc.doctype, doc.name, 'whatsapp_display_phone_number', '+1 555 0123')
+		with self.assertRaisesRegex(frappe.ValidationError, 'identity is immutable'):
+			set_value(doc.doctype, doc.name, 'account_id', '123450005')
+		with self.assertRaises(frappe.DuplicateEntryError):
+			self.account(doc.account_id, '201', 'first', doc.channel, enabled=False)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(dict(doctype=doc.doctype, channel=doc.channel, account_name=doc.account_name,
+				account_id='123450005', enabled=1, parameters=[
+					dict(parameter_key='access_token', secret_value='synthetic'),
+					dict(parameter_key='waba_id', value='"201"'),
+				])).insert()
+
+		with patch('messaging.whatsapp.api.requests.request') as request:
+			response = request.return_value.__enter__.return_value
+			response.status_code = 200
+			response.iter_content.return_value = [b'{"id":"123450001","display_phone_number":"+1 555 0199"}']
+			result = self.action(doc, 'enable')
+			self.assertEqual(result['result'], 'failed')
+			self.assertEqual(result['response']['http_status'], 200)
+			self.assertEqual(result['response']['data'], {})
+			self.assertFalse(doc.reload().enabled)
+			self.assertFalse(doc.whatsapp_display_phone_number)
+			response.iter_content.return_value = [b'{"id":"123450004","display_phone_number":"<script>"}']
+			self.assertEqual(self.action(doc, 'enable')['result'], 'failed')
+			self.assertFalse(doc.reload().enabled)
+
+			response.iter_content.return_value = [b'{"id":"123450004","display_phone_number":"+1 555 0123"}']
+			self.assertEqual(self.action(doc, 'check')['result'], 'confirmed')
+			self.assertFalse(doc.reload().enabled)
+			self.assertEqual(doc.whatsapp_display_phone_number, '+1 555 0123')
+			set_channel_status(doc.channel, 'Disabled')
+			count = request.call_count
+			with self.assertRaisesRegex(frappe.PermissionError, 'channel is disabled'):
+				self.action(doc, 'enable')
+			self.assertEqual(request.call_count, count)
+			self.assertTrue(self.third.reload().enabled)
+			set_channel_status(doc.channel, 'Enabled')
+
+			before = request.call_count
+			self.assertTrue(self.action(doc, 'enable')['enabled'])
+			self.assertEqual(request.call_count, before + 1)
+			self.assertEqual(request.call_args.args[0], 'GET')
+			doc.reload()
+			with self.assertRaises(frappe.PermissionError):
+				set_value(doc.doctype, doc.name, 'enabled', 0)
+			admin.disable_account(doc.name, str(doc.modified))
+			self.assertFalse(doc.reload().enabled)
+			self.assertEqual(doc.whatsapp_display_phone_number, '+1 555 0123')
+			self.assertEqual(secret(doc, 'access_token'), doc.account_id + '-synthetic')
+			self.assertEqual(request.call_count, before + 1)
+			self.assertTrue(self.first.reload().enabled)
+			self.assertTrue(self.third.reload().enabled)
+
+	def test_enable_rejects_a_lookup_that_races_with_a_credential_change(self):
+		doc = self.account('123450004', '201', 'first', self.first.channel, enabled=False)
+
+		def lookup(*args, **kwargs):
+			current = frappe.get_doc(doc.doctype, doc.name)
+			next(row for row in current.parameters if row.parameter_key == 'access_token').secret_value = 'replacement'
+			current.save()
+			return dict(id=doc.account_id, display_phone_number='+1 555 0123')
+
+		with patch.object(Graph, '_request', side_effect=lookup):
+			with self.assertRaises(frappe.TimestampMismatchError):
+				self.action(doc, 'enable')
+		self.assertFalse(doc.reload().enabled)
+		self.assertFalse(doc.whatsapp_display_phone_number)
+		self.assertEqual(secret(doc, 'access_token'), 'replacement')
 
 	def test_graph_version_schema_and_saved_channel_selection(self):
 		schema = parameter_schema('Communication Channel', provider=PROVIDER)
@@ -194,8 +469,9 @@ class TestWhatsApp(unittest.TestCase):
 		channel.save()
 		self.assertEqual(frappe.db.get_value('Communication Provider Value', row_name, 'value'), '"v25.0"')
 		self.assertEqual(channel.status, 'Enabled')
-		self.assertEqual(admin._admin_client(self.first.name)[1].version, 'v25.0')
-		self.assertEqual(admin._admin_client(self.second.name)[1].version, DEFAULT_VERSION)
+		with patch.object(Graph, '_request', return_value={'data': []}):
+			self.assertEqual(self.action(self.first, 'check')['request']['graph_version'], 'v25.0')
+			self.assertEqual(self.action(self.second, 'check')['request']['graph_version'], DEFAULT_VERSION)
 		version_row = next(row for row in channel.parameters if row.name == row_name)
 		version_row.value = json.dumps('v28.0')
 		with self.assertRaises(frappe.ValidationError):
@@ -212,6 +488,45 @@ class TestWhatsApp(unittest.TestCase):
 		self.assertEqual(self.request(self.third, query=query).get_data(), b'1234')
 		self.assertEqual(self.request(self.second, query=query).status_code, 403)
 
+	def test_channel_webhook_verification_evidence(self):
+		channel = frappe.get_doc('Communication Channel', self.first.channel)
+		self.assertEqual(admin.get_webhook_url(channel.name)['evidence'], {})
+		query = {'hub.mode': 'subscribe', 'hub.verify_token': 'first-verify', 'hub.challenge': 'fixture-challenge'}
+		received_at = frappe.utils.get_datetime('2026-11-21 14:37:18.123456')
+		frappe.set_user('Guest')
+		with patch.object(webhook, 'now_datetime', return_value=received_at):
+			reply = self.request(self.first, query=query, record_evidence=True)
+		self.assertEqual((reply.status_code, reply.mimetype, reply.get_data()), (200, 'text/plain', b'fixture-challenge'))
+		frappe.set_user('Administrator')
+		expected = dict(get=dict(received_at=str(received_at), token_valid=True, challenge_answered=True, http_status=200))
+		self.assertEqual(admin.get_webhook_url(channel.name)['evidence'], expected)
+		self.assertEqual(frappe.db.get_value(channel.doctype, channel.name, 'modified'), channel.modified)
+		channel.set(webhook_evidence.FIELD, '{"get":{"http_status":400}}')
+		channel.save()
+		self.assertEqual(admin.get_webhook_url(channel.name)['evidence'], expected)
+		frappe.set_user('Guest')
+		self.assertEqual(self.request(self.first, query={**query, 'hub.verify_token': 'incorrect'},
+			record_evidence=True).status_code, 403)
+		with patch.object(webhook, 'now_datetime', return_value=received_at - timedelta(seconds=1)):
+			self.assertEqual(self.request(self.first, query=query, record_evidence=True).status_code, 200)
+		frappe.set_user('Administrator')
+		self.assertEqual(admin.get_webhook_url(channel.name)['evidence'], expected)
+		stored = str(channel.reload().get(webhook_evidence.FIELD))
+		for private in ('fixture-challenge', 'first-verify', 'first-secret'):
+			self.assertNotIn(private, stored)
+
+	def test_channel_webhook_storage_failure_preserves_challenge_response(self):
+		query = {'hub.mode': 'subscribe', 'hub.verify_token': 'first-verify', 'hub.challenge': 'fixture-challenge'}
+		frappe.set_user('Guest')
+		with (patch.object(frappe.db, 'set_value', side_effect=RuntimeError('private fixture error')),
+			patch.object(frappe.db, 'rollback') as rollback, patch.object(frappe, 'logger') as logger):
+			reply = self.request(self.first, query=query, record_evidence=True)
+		self.assertEqual((reply.status_code, reply.get_data()), (200, b'fixture-challenge'))
+		rollback.assert_called_once_with()
+		logger.return_value.warning.assert_called_once_with('Could not record Meta webhook evidence.')
+		frappe.set_user('Administrator')
+		self.assertEqual(admin.get_webhook_url(self.first.channel)['evidence'], {})
+
 	def test_callback_url_uses_saved_channel_identity_and_public_site_origin(self):
 		channel = frappe.get_doc('Communication Channel', self.first.channel)
 		channel.channel_name = 'Renamed label'
@@ -220,6 +535,7 @@ class TestWhatsApp(unittest.TestCase):
 			self.assertEqual(admin.get_webhook_url(channel.name), {
 				'url': 'https://wa.example.com' + webhook.WEBHOOK_PATH +
 					'?channel=whatsapp_protocol_fixture_first',
+				'evidence': {},
 			})
 			self.assertNotEqual(admin.get_webhook_url(channel.name), admin.get_webhook_url(self.second.channel))
 			self.assertEqual(webhook.callback_url('synthetich'),
@@ -230,7 +546,7 @@ class TestWhatsApp(unittest.TestCase):
 		for host in ('', 'http://wa.example.com', 'https://qota.localhost', 'https://127.0.0.1',
 			'https://user:password@wa.example.com', 'wa.example.com', 'https://wa.example.com/?token=ignored'):
 			with self.subTest(host=host), patch.dict(frappe.conf, host_name=host, hostname=None):
-				self.assertEqual(admin.get_webhook_url(channel.name), {'url': None})
+				self.assertEqual(admin.get_webhook_url(channel.name), {'url': None, 'evidence': {}})
 		frappe.set_user('Guest')
 		with self.assertRaises(frappe.PermissionError):
 			admin.get_webhook_url(channel.name)
@@ -283,6 +599,9 @@ class TestWhatsApp(unittest.TestCase):
 			doc.reload()
 		doc.append('parameters', dict(parameter_key='app_id', value='"300000000000000001"'))
 		doc.save()
+		with patch.dict(frappe.conf, host_name='http://example.com'):
+			with self.assertRaisesRegex(frappe.ValidationError, 'public HTTPS site origin'):
+				set_channel_status(doc.name, 'Enabled')
 		set_channel_status(doc.name, 'Enabled')
 		self.assertEqual(value(doc.reload(), 'app_id'), '300000000000000001')
 		doc.remove(next(row for row in doc.parameters if row.parameter_key == 'app_id'))
@@ -408,6 +727,26 @@ class TestWhatsApp(unittest.TestCase):
 			self.assertEqual(len(rows), 1)
 			self.assertEqual(rows[0].content, 'Hola café')
 			self.assertEqual(frappe.db.get_value('Chat Contact', rows[0].contact, 'account'), self.first.name)
+		frappe.set_user('Administrator')
+		evidence = admin.account_diagnostics(self.first.name)
+		self.assertTrue(evidence['received_at'])
+		self.assertTrue(evidence['configured'])
+		webhook_result = evidence['results']['webhook']
+		self.assertEqual(webhook_result['result'], 'webhook_received')
+		self.assertFalse(webhook_result['stale'])
+		self.assertIn('connection', evidence['results'])
+		self.assertIn('webhook', str(self.first.reload().last_diagnostics))
+		sibling = admin.account_diagnostics(self.third.name)
+		self.assertIsNone(sibling['received_at'])
+		self.assertNotIn('webhook', sibling['results'])
+		for private in ('Hola café', '15550000001', 'wamid.inbound', 'first-verify', 'first-secret'):
+			self.assertNotIn(private, str(evidence))
+			self.assertNotIn(private, str(self.first.last_diagnostics))
+		modified = frappe.db.get_value('Communication Channel', self.first.channel, 'modified')
+		admin.regenerate_webhook_token(self.first.channel, str(modified))
+		historical = admin.account_diagnostics(self.first.name)['results']['webhook']
+		self.assertTrue(historical['stale'])
+		self.assertEqual(historical['checked_at'], webhook_result['checked_at'])
 
 	def test_signed_batch_rejects_other_channels_before_dispatch(self):
 		first = self.payload(statuses=[{}])
@@ -424,6 +763,53 @@ class TestWhatsApp(unittest.TestCase):
 			dispatch.assert_called_once()
 			self.assertEqual(dispatch.call_args.args[:2], (PROVIDER, self.second.name))
 			self.assertEqual(dispatch.call_args.args[2].channel, self.second.channel)
+
+	def test_channel_webhook_post_evidence_preserves_routing_and_turn_state(self):
+		query = {'hub.mode': 'subscribe', 'hub.verify_token': 'first-verify', 'hub.challenge': 'fixture-challenge'}
+		self.assertEqual(self.request(self.first, query=query, record_evidence=True).status_code, 200)
+		verified = admin.get_webhook_url(self.first.channel)['evidence']['get']
+		raw = self.payload(phone='123450004', messages=[{'text': {'body': 'synthetic message'}}])
+		frappe.set_user('Guest')
+		self.assertEqual(self.request(self.first, data=raw, signature='invalid', record_evidence=True).status_code, 403)
+		frappe.set_user('Administrator')
+		self.assertEqual(admin.get_webhook_url(self.first.channel)['evidence'], {'get': verified})
+		frappe.set_user('Guest')
+		with patch.object(webhook, 'dispatch_ingress') as dispatch:
+			self.assertEqual(self.request(self.first, data=raw, signature=self.sign(raw), record_evidence=True).status_code, 403)
+		dispatch.assert_not_called()
+		frappe.set_user('Administrator')
+		evidence = admin.get_webhook_url(self.first.channel)['evidence']
+		self.assertEqual(evidence['get'], verified)
+		self.assertEqual(evidence['post'], dict(received_at=evidence['post']['received_at'], hmac_valid=True,
+			event_type='messages', routing='unconfirmed', processing='unconfirmed'))
+		self.assertFalse(frappe.db.exists('Communication Channel Account', '123450004'))
+		self.assertEqual(admin.get_webhook_url(self.second.channel)['evidence'], {})
+		channel = frappe.get_doc('Communication Channel', self.first.channel)
+		for private in ('synthetic message', '123450004', self.sign(raw), 'first-verify', 'first-secret'):
+			self.assertNotIn(private, str(channel.get(webhook_evidence.FIELD)))
+
+		raw = self.payload(messages=[dict(id='wamid.webhook.evidence', **{'from': '15550000001'},
+			timestamp=str(int(utcnow().timestamp())), type='text', text=dict(body='synthetic message'))])
+		frappe.set_user('Guest')
+		with (patch.object(frappe.db, 'commit'), patch.object(frappe.db, 'rollback'),
+			patch('messaging.conversation.doctype.chat_turn.inbox.schedule_contact') as schedule):
+			for _ in range(2):
+				reply = self.request(self.first, data=raw, signature=self.sign(raw), record_evidence=True)
+				self.assertEqual((reply.status_code, reply.get_data()), (200, b'ok'))
+		self.assertEqual(schedule.call_count, 2)
+		frappe.set_user('Administrator')
+		turn, = frappe.get_all('Chat Message', filters={'external_id': 'wamid.webhook.evidence'}, pluck='turn')
+		evidence = admin.get_webhook_url(channel.name)['evidence']
+		self.assertEqual(evidence['get'], verified)
+		self.assertEqual(evidence['post']['routing'], 'routed')
+		self.assertEqual(evidence['post']['processing'], 'pending')
+		self.assertNotIn('turn', evidence['post'])
+		stored = str(channel.reload().get(webhook_evidence.FIELD))
+		for private in ('synthetic message', 'wamid.webhook.evidence', '15550000001', self.sign(raw), 'first-secret'):
+			self.assertNotIn(private, stored)
+		frappe.db.set_value('Chat Turn', turn, {'inbox_state': 'Done', 'status': 'Complete'})
+		processed = admin.get_webhook_url(channel.name)['evidence']['post']
+		self.assertEqual(processed, {**evidence['post'], 'processing': 'complete'})
 
 	def test_outbound_is_account_scoped_with_window_enforcement(self):
 		base = dict(account=self.first.name, channel=self.first.channel, destination='15550000001',
@@ -1200,3 +1586,126 @@ class TestWhatsApp(unittest.TestCase):
 			synchronize_templates(PROVIDER, self.first.channel, self.first.name)
 		with self.assertRaises(frappe.PermissionError):
 			publish_template(doc.name, str(doc.modified))
+
+	def set_graph_version(self, channel_name, version):
+		channel = frappe.get_doc('Communication Channel', channel_name)
+		row = next(row for row in channel.parameters if row.parameter_key == 'graph_version')
+		row.value = json.dumps(version)
+		channel.save()
+		return channel
+
+	def open_service_window(self, account, sender):
+		from messaging.conversation.doctype.chat_turn.inbox import accept_message
+
+		with (patch.object(frappe.db, 'commit'), patch.object(frappe.db, 'rollback'),
+			patch('messaging.conversation.doctype.chat_turn.inbox.schedule_contact')):
+			accept_message(dict(account=account.name, channel=account.channel, sender=sender,
+				event_id='wamid.window.' + sender, event_at=utcnow().isoformat() + 'Z', text='Hola'))
+
+	def test_interleaved_channels_keep_version_token_and_phone(self):
+		"""Three WhatsApp channels, plus a second number on A's WABA, never share a Graph call."""
+		channel_c = self.account('123450009', '209', 'channelc')
+		self.set_graph_version(self.first.channel, 'v25.0')
+		self.set_graph_version(self.second.channel, 'v26.0')
+		self.set_graph_version(channel_c.channel, 'v27.0')
+		senders = {
+			self.first.name: '50499999999',
+			self.second.name: '50499991234',
+			self.third.name: '14155552671',
+			channel_c.name: '50488887777',
+		}
+		for account in (self.first, self.second, self.third, channel_c):
+			self.open_service_window(account, senders[account.name])
+
+		calls = []
+		json_module = json
+
+		class _Response:
+			def __init__(self, body):
+				self.status_code = 200
+				self.headers = {}
+				self._body = body
+
+			def iter_content(self, _size):
+				return [self._body]
+
+			def __enter__(self):
+				return self
+
+			def __exit__(self, *_args):
+				return False
+
+		def serve(method, url, headers=None, params=None, json=None, **kwargs):
+			calls.append(dict(method=method, url=url, token=headers['Authorization'], payload=json, params=params,
+				verify=kwargs.get('verify'), redirects=kwargs.get('allow_redirects')))
+			if url.endswith('/messages'):
+				body = b'{"messages":[{"id":"wamid.outbound"}]}'
+			else:
+				phone = url.rstrip('/').rsplit('/', 1)[-1]
+				body = json_module.dumps(dict(id=phone, display_phone_number='+1 555 0100')).encode()
+			return _Response(body)
+
+		def text(account, outbound):
+			return handoff(self.definition, dict(account=account.name, channel=account.channel,
+				destination=senders[account.name], content='Hello', interactive=[], outbound_id=outbound))
+
+		def expect(call, method, version, node, token, *, payload_type=None, opaque=None):
+			self.assertEqual(call['method'], method)
+			self.assertEqual(call['url'], f'https://graph.facebook.com/{version}/{node}'
+				+ ('/messages' if method == 'POST' else ''))
+			self.assertEqual(call['token'], 'Bearer ' + token)
+			self.assertTrue(call['verify'])
+			self.assertFalse(call['redirects'])
+			if payload_type:
+				self.assertEqual(call['payload']['type'], payload_type)
+				self.assertEqual(call['payload']['to'], senders[node] if node in senders else call['payload']['to'])
+				self.assertEqual(call['payload']['biz_opaque_callback_data'], opaque)
+
+		with patch('messaging.whatsapp.api.requests.request', side_effect=serve):
+			self.assertEqual(text(self.first, 'a' * 64)['outcome'], 'Accepted')
+			self.assertEqual(text(channel_c, 'c' * 64)['outcome'], 'Accepted')
+			checked = self.action(self.second, 'check')
+			self.assertEqual(checked['request']['graph_version'], 'v26.0')
+			with (patch('messaging.communication.doctype.communication_template.status.notification_template_gate', return_value=None),
+				patch('messaging.whatsapp.provider.prepare_provider_template', return_value=dict(name='notice', language=dict(code='en_US')))):
+				notice = handoff(self.definition, dict(account=self.first.name, channel=self.first.channel,
+					destination=senders[self.first.name], source_type='Notification Queue', output_mode='Provider Template',
+					template_reference='synthetic-template', template_revision='revision-a', outbound_id='e' * 64))
+			self.assertEqual(notice['outcome'], 'Accepted')
+			before_webhook = len(calls)
+			raw = self.payload(phone=channel_c.name, business='209', messages=[dict(
+				id='wamid.channel.c', **{'from': senders[channel_c.name]}, timestamp=str(int(utcnow().timestamp())),
+				type='text', text=dict(body='desde C'))])
+			frappe.set_user('Guest')
+			self.assertEqual(self.request(self.first, data=raw, signature=self.sign(raw, 'channelc')).status_code, 403)
+			self.assertEqual(self.request(channel_c, data=raw, signature=self.sign(raw, 'first')).status_code, 403)
+			with (patch.object(frappe.db, 'commit'), patch.object(frappe.db, 'rollback'),
+				patch('messaging.conversation.doctype.chat_turn.inbox.schedule_contact')):
+				self.assertEqual(self.request(channel_c, data=raw, signature=self.sign(raw, 'channelc')).status_code, 200)
+			frappe.set_user('Administrator')
+			self.assertEqual(len(calls), before_webhook)
+			contact = frappe.db.get_value('Chat Contact', dict(channel=channel_c.channel, account=channel_c.name,
+				external_sender=senders[channel_c.name]), 'name')
+			self.assertTrue(contact)
+			self.assertFalse(frappe.db.exists('Chat Contact', dict(channel=self.first.channel, account=self.first.name,
+				external_sender=senders[channel_c.name])))
+			self.set_graph_version(self.second.channel, 'v27.0')
+			self.assertEqual(text(self.second, 'b' * 64)['outcome'], 'Accepted')
+			self.assertEqual(text(self.third, 'd' * 64)['outcome'], 'Accepted')
+			self.assertEqual(text(self.first, 'f' * 64)['outcome'], 'Accepted')
+
+		expect(calls[0], 'POST', 'v25.0', self.first.name, self.first.name + '-synthetic', payload_type='text', opaque='b:' + 'a' * 64)
+		expect(calls[1], 'POST', 'v27.0', channel_c.name, channel_c.name + '-synthetic', payload_type='text', opaque='b:' + 'c' * 64)
+		expect(calls[2], 'GET', 'v26.0', self.second.name, self.second.name + '-synthetic')
+		self.assertEqual(calls[2]['params'], {'fields': 'id,display_phone_number'})
+		expect(calls[3], 'POST', 'v25.0', self.first.name, self.first.name + '-synthetic', payload_type='template', opaque='n:' + 'e' * 64)
+		expect(calls[4], 'POST', 'v27.0', self.second.name, self.second.name + '-synthetic', payload_type='text', opaque='b:' + 'b' * 64)
+		expect(calls[5], 'POST', 'v25.0', self.third.name, self.third.name + '-synthetic', payload_type='text', opaque='b:' + 'd' * 64)
+		expect(calls[6], 'POST', 'v25.0', self.first.name, self.first.name + '-synthetic', payload_type='text', opaque='b:' + 'f' * 64)
+		tokens = {call['token'] for call in calls}
+		self.assertEqual(tokens, {
+			'Bearer 123450001-synthetic', 'Bearer 123450009-synthetic',
+			'Bearer 123450002-synthetic', 'Bearer 123450003-synthetic',
+		})
+		self.assertEqual(graph_version(frappe.get_doc('Communication Channel', self.first.channel)), 'v25.0')
+		self.assertEqual(graph_version(frappe.get_doc('Communication Channel', channel_c.channel)), 'v27.0')

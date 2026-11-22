@@ -70,6 +70,31 @@ def defer(doc, code, now):
 	return result(doc)
 
 
+def submit_notice_cancelled(doc):
+	"""Return a terminal reason when a pending submit notice outlived its document.
+
+	Only ``on_submit`` depends on the document remaining submitted. ``on_cancel``
+	stays eligible at ``docstatus`` 2. The read is repeated on every attempt and
+	does not lock the source across transport.
+	"""
+	if doc.document_event != "on_submit":
+		return None
+	docstatus = frappe.db.get_value(doc.source_doctype, doc.source_name, "docstatus")
+	if docstatus is not None and int(docstatus) == 2:
+		return "source_cancelled"
+	return None
+
+
+def _omit_cancelled_submit(doc):
+	reason = submit_notice_cancelled(doc)
+	if not reason:
+		return None
+	doc.status, doc.diagnostic_code = "Cancelled", reason
+	save(doc)
+	frappe.db.commit()
+	return result(doc)
+
+
 def revalidate(doc):
 	"""Recheck the original event; changed data never rewrites the immutable snapshot."""
 	rule = approval.lock_execution("Notification Rule", doc.notification_rule)
@@ -99,6 +124,9 @@ def revalidate(doc):
 		return 'delivery_configuration_changed'
 	if not frappe.db.exists(doc.source_doctype, doc.source_name):
 		return 'source_unavailable'
+	cancelled = submit_notice_cancelled(doc)
+	if cancelled:
+		return cancelled
 	source = frappe.get_doc(doc.source_doctype, doc.source_name)
 	from messaging.communication.doctype.notification_rule.conditions import matches
 	if not matches(dict(document_event=doc.document_event, field_name=doc.condition_field or '', value=doc.condition_value or ''), source):
@@ -159,6 +187,10 @@ def deliver(name, *, now=None):
 		doc.attempt_count = (doc.attempt_count or 0) + 1
 		save(doc)
 		frappe.db.commit()
+		# Stop before any deferral so a cancelled submit is not retried.
+		omitted = _omit_cancelled_submit(doc)
+		if omitted:
+			return omitted
 		from messaging.communication.doctype.process_definition.process_definition import resolve_definition
 		try:
 			resolve_definition(frappe.db.get_value('Notification Rule', doc.notification_rule,
@@ -245,6 +277,11 @@ def deliver(name, *, now=None):
 			doc.resolved_at = now
 			save(doc); frappe.db.commit()
 			return result(doc)
+		# Repeat the read immediately before the handoff marker. A marker is written
+		# only when the submit document is still uncancelled, so a crash here stays recoverable.
+		omitted = _omit_cancelled_submit(doc)
+		if omitted:
+			return omitted
 		# The connection lock serializes reception and Human transitions through handoff.
 		# This durable marker is written BEFORE calling send. A lost result is Unknown.
 		doc.handoff_at, doc.diagnostic_code = now, None

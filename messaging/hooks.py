@@ -51,7 +51,12 @@ add_to_apps_screen = [
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Communication Channel": "public/js/whatsapp_channel.js"}
+doctype_js = {
+	"Communication Channel": ["public/js/whatsapp_channel.js", "public/js/channel_public_information.js"],
+}
+page_renderer = [
+	"messaging.communication.doctype.communication_channel.public_information.PublicDocumentPage",
+]
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_kanban_js = {"doctype" : "public/js/doctype_kanban.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}

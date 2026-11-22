@@ -57,7 +57,7 @@ def parameter_schema(doctype, provider=None, channel=None, account=None):
 			parameter['read_only'] = True
 		if scope == 'Notification Rule' and parameter['field_type'] == 'Link' and frappe.get_meta(parameter['options']).has_field('enabled'):
 			parameter['filters'] = {'enabled': 1}
-	return dict(revision=catalog.definition_hash, automatic_account_id='prepare_account_id' in definition['operations'], parameters=parameters)
+	return dict(revision=catalog.definition_hash, provider=provider, automatic_account_id='prepare_account_id' in definition['operations'], parameters=parameters)
 
 
 def transport_parameters(provider, account, *, template=None):

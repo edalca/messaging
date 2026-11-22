@@ -8,21 +8,21 @@ from datetime import datetime, timezone
 import hmac
 import json
 import re
-from urllib.parse import quote, urlencode, urlsplit
 
 import frappe
+from frappe.utils import now_datetime
 from werkzeug.wrappers import Response
 
+from messaging.communication.doctype.communication_channel import webhook_evidence
 from messaging.communication.doctype.communication_channel_account.communication_channel_account import dispatch_ingress
 from messaging.communication.doctype.communication_provider.communication_provider import require_provider_enabled
 from messaging.whatsapp.api import numeric_id
 from messaging.whatsapp.configuration import PROVIDER, secret, value
+from messaging.whatsapp.configuration import WEBHOOK_PATH as WEBHOOK_PATH, callback_url as callback_url
+from messaging.whatsapp.diagnostics import configuration_key, record_webhook_receipts
 from messaging.whatsapp.provider import DESTINATION, MESSAGE_ID, destination
 
 MAX_WEBHOOK = 3 * 1024 * 1024
-WEBHOOK_PATH = '/api/method/messaging.whatsapp.webhook.handler'
-DOMAIN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?')
-LOCAL_SUFFIXES = ('.localhost', '.local', '.internal', '.lan', '.home.arpa', '.test', '.invalid', '.example')
 STAGES = {'sent': 'Sent', 'delivered': 'Delivered', 'read': 'Read', 'failed': 'Failed'}
 
 
@@ -35,23 +35,6 @@ class Event:
 	phone: str
 	kind: str
 	data: dict
-
-
-def callback_url(channel):
-	"""Build the Meta callback from the site's configured public origin and the saved channel ID."""
-	host_name = frappe.conf.host_name or frappe.conf.hostname or ''
-	try:
-		origin = urlsplit(host_name.strip())
-		domain = (origin.hostname or '').rstrip('.').encode('idna').decode('ascii')
-		port = origin.port
-	except (ValueError, UnicodeError):
-		return None
-	if (origin.scheme != 'https' or not DOMAIN.fullmatch(domain) or domain.endswith(LOCAL_SUFFIXES)
-		or origin.username is not None or origin.path not in ('', '/') or origin.query or origin.fragment):
-		return None
-	authority = f'{domain}:{port}' if port is not None else domain
-	query = urlencode({'channel': channel}, quote_via=quote)
-	return f'https://{authority}{WEBHOOK_PATH}?{query}'
 
 
 def signed(raw, signature, app_secret):
@@ -202,7 +185,11 @@ def handler():
 			or not hmac.compare_digest(token.encode(), configured.encode())
 			or not challenge or len(challenge) > 256):
 			return Response(status=403)
-		return Response(challenge, mimetype='text/plain')
+		reply = Response(challenge, mimetype='text/plain')
+		webhook_evidence.after_response(request, channel, 'get', dict(
+			received_at=now_datetime().isoformat(sep=' ', timespec='microseconds'),
+			token_valid=True, challenge_answered=True, http_status=reply.status_code))
+		return reply
 	if request.content_length is not None and request.content_length > MAX_WEBHOOK:
 		return Response(status=413)
 	raw = request.get_data()
@@ -211,13 +198,25 @@ def handler():
 	signature = request.headers.get('X-Hub-Signature-256', '')
 	if not signed(raw, signature, secret(channel, 'app_secret')):
 		return Response(status=403)
+	receipt = dict(received_at=now_datetime().isoformat(sep=' ', timespec='microseconds'),
+		hmac_valid=True, event_type='unknown', routing='unconfirmed', processing='unconfirmed')
+	try:
+		return _receive_post(channel, raw, signature, receipt)
+	finally:
+		webhook_evidence.after_response(request, channel, 'post', receipt)
+
+
+def _receive_post(channel, raw, signature, receipt):
 	try:
 		batch = list(events(raw, signature, channel.name))
 		if len(batch) > 500:
 			raise ValueError
 	except (ValueError, RecursionError):
 		return Response(status=400)
+	kinds = {'messages' if event.kind == 'ignore' else event.kind for event in batch}
+	receipt['event_type'] = 'mixed' if len(kinds) > 1 else next(iter(kinds), 'other')
 	accounts = {}
+	phones = {}
 	routes = {}
 	verified = []
 	for event in batch:
@@ -227,6 +226,7 @@ def handler():
 				name = frappe.db.get_value('Communication Channel Account',
 					dict(channel=channel.name, account_id=event.phone, enabled=1), 'name')
 				candidates = [frappe.get_doc('Communication Channel Account', name)] if name else []
+				phones.update((account.name, account) for account in candidates)
 			else:
 				if not accounts:
 					accounts = {name: frappe.get_doc('Communication Channel Account', name) for name in frappe.get_all(
@@ -237,19 +237,36 @@ def handler():
 			return Response(status=403)
 		if event.kind != 'ignore':
 			verified.append((event, routes[key]))
+	if batch:
+		receipt['routing'] = 'matched'
 	# Receipt and delivery owners can restart the transaction under their locks.
 	# Schedule template refreshes last so those restarts cannot erase enqueue callbacks.
 	template_refreshes = set()
+	receipts = {}
 	for event, names in sorted(verified, key=lambda route: route[0].kind == 'template'):
 		if event.kind != 'template':
 			for name in names:
-				dispatch_ingress(PROVIDER, name, event)
+				account = phones[name]
+				binding = configuration_key(account, channel, 'webhook') if event.kind == 'messages' else None
+				result = dispatch_ingress(PROVIDER, name, event)
+				receipt['routing'] = 'routed'
+				if binding:
+					receipts[name] = (str(now_datetime()), binding, (account.creation, account.modified))
+				if event.kind == 'messages' and isinstance(result, dict) and result.get('turn'):
+					receipt.update(turn=result['turn'], processing='recorded')
+				elif event.kind == 'statuses' and result and 'turn' not in receipt:
+					receipt['processing'] = 'delivery_report_handled'
 			continue
 		key = (event.business, str(event.data.get('message_template_name')), str(event.data.get('message_template_language')))
 		if key in template_refreshes:
 			continue
 		for name in names:
-			if dispatch_ingress(PROVIDER, name, event):
+			result = dispatch_ingress(PROVIDER, name, event)
+			receipt['routing'] = 'routed'
+			if result:
 				template_refreshes.add(key)
+				if receipt['processing'] == 'unconfirmed':
+					receipt['processing'] = 'template_refresh_scheduled'
 				break
+	record_webhook_receipts(channel, receipts)
 	return Response('ok', mimetype='text/plain')

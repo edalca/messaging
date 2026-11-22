@@ -9,6 +9,8 @@ from frappe.model.document import Document
 
 from messaging.common.locking import document_savepoint, lock_document_types
 from messaging.common.write_guards import InternalWriteGuard
+from messaging.communication.doctype.communication_channel.public_information import validate_public_information
+from messaging.communication.doctype.communication_channel.webhook_evidence import FIELD as WEBHOOK_EVIDENCE
 from messaging.communication.doctype.communication_provider_value.communication_provider_value import validate_values, cleanup_values
 from messaging.security.permissions import require_system_manager
 
@@ -74,6 +76,8 @@ class CommunicationChannel(Document):
 		)
 
 		old = self.get_doc_before_save()
+		# Ordinary saves use the locked database snapshot, including when the form is stale.
+		self.set(WEBHOOK_EVIDENCE, old.get(WEBHOOK_EVIDENCE) if old else None)
 		self.channel_name = _normalize_channel_name(self.channel_name)
 		if old and self.provider != old.provider:
 			frappe.throw(_("Channel provider identity is immutable."))
@@ -101,6 +105,7 @@ class CommunicationChannel(Document):
 				frappe.throw(_("A channel with this ID already exists."))
 		if catalog.single_channel and frappe.db.exists(self.doctype, {'provider': self.provider, 'name': ['!=', self.name]}):
 			frappe.throw(_("This provider permits only one channel."))
+		validate_public_information(self, old)
 		validate_values(self)
 		self._validate_quotas()
 

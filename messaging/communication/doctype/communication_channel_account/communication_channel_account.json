@@ -5,15 +5,24 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "general_tab",
   "channel",
   "account_id",
+  "whatsapp_number_details",
+  "whatsapp_display_phone_number",
   "column_break_account",
   "account_name",
   "enabled",
   "diagnostic_code",
   "section_break_mpbj",
   "parameter_controls",
-  "parameters"
+  "parameters",
+  "status_summary_section",
+  "summary_details",
+  "diagnostics_tab",
+  "connection_details",
+  "subscription_details",
+  "last_diagnostics"
  ],
  "fields": [
   {
@@ -70,6 +79,57 @@
   {
    "fieldname": "column_break_account",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "whatsapp_display_phone_number",
+   "fieldtype": "Data",
+   "label": "WhatsApp Number",
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "connection_details",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "subscription_details",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "last_diagnostics",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Last Diagnostics",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "summary_details",
+   "fieldtype": "HTML",
+   "hidden": 1
+  },
+  {
+   "fieldname": "whatsapp_number_details",
+   "fieldtype": "HTML",
+   "hidden": 1
+  },
+  {
+   "fieldname": "status_summary_section",
+   "fieldtype": "Section Break",
+   "label": "Status summary",
+   "hidden": 1
+  },
+  {
+   "fieldname": "diagnostics_tab",
+   "fieldtype": "Tab Break",
+   "label": "Diagnostics",
+   "hidden": 1
   }
  ],
  "links": [],

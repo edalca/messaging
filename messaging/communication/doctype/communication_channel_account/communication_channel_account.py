@@ -94,6 +94,10 @@ class CommunicationChannelAccount(Document):
 		return bool(frappe.db.get_value(self.doctype, filters, "name", for_update=True))
 
 	def validate(self):
+		# The locking read from Frappe's save path preserves a diagnostic written
+		# after the form was opened. Ordinary saves and imports never own this field.
+		previous = self.get_doc_before_save()
+		self.last_diagnostics = previous.last_diagnostics if previous else None
 		if not self.is_new() and any(self.has_value_changed(f) for f in ('channel', 'account_id')):
 			frappe.throw(_("Channel account identity is immutable."))
 		if not isinstance(self.account_id, str) or not self.account_id.strip() or self.account_id != self.account_id.strip() or len(self.account_id) > 140:

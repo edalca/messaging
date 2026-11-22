@@ -386,7 +386,18 @@ In particular:
 
 Authorized administrators generate the webhook verify token explicitly on a
 saved WhatsApp channel. A channel shares that token across the associated Meta
-numbers. Administrators can copy or rotate it through the channel actions.
+numbers. Administrators use the channel's **Webhook Actions** menu to copy the
+callback URL or verification token, generate the first token, or confirm rotation.
+Enabling the channel validates the app configuration and the public HTTPS
+callback origin. Each WhatsApp account stores one immutable Phone Number ID
+and can share its Messaging Account ID with other numbers. Its enable action
+requires a successful lookup of that exact number and a current configuration
+snapshot. The last confirmed display number is read-only. The account persists
+the latest sanitized connection, subscription and signed message webhook results
+independently. Desk reads saved evidence and marks it historical when the
+relevant configuration changes. **WhatsApp Actions** runs the explicit Graph
+GET for the configured Messaging Account's subscribed apps. Meta Developers
+owns webhook subscription management. Disabling a number only changes local status.
 The Meta App Secret authenticates signed POST events. The native WhatsApp
 declaration uses the Phone Number ID as the Messaging
 account ID and binds signed inbound events to both the channel and WABA.
@@ -396,6 +407,13 @@ Queue. Signed template notifications schedule a scoped reread of Meta's current
 status. Communication Template owns the persisted readings. The optional
 `mark_incoming_read` operation receives evidence from the bot processing
 boundary or the assigned agent's native read cursor.
+
+Communication Channel owns its public organization details and three legal
+drafts. Explicit publication snapshots only the reviewed public fields and
+sanitized body. Draft changes and operational channel status preserve published
+content. The Website renderer resolves its three slugs by exact immutable
+channel ID. Generate Desk URLs with the configured public HTTPS origin shared
+with the WhatsApp callback. See [README.md](README.md) for the publishing steps.
 
 [security](messaging/security/) owns the common service identity, authorization,
 and scoped context restoration. Setup provision and read-only runtime
@@ -526,12 +544,17 @@ Runtime and process log → Notification Queue → dispatcher → neutral transp
   free of external effects.
 - `dispatch.dispatch_due` claims due work and checks scope, configured rule
   and current approval, original occurrence, document and delivery
-  dependencies before sending the stored snapshot. Open conversation or human
-  attention can defer delivery for the exact recipient identities. The lock
-  and durable handoff marker distinguish safe deferral from a potentially
-  completed send. Processing without a handoff can be recovered. Once a
-  handoff may have happened, retain Unknown pending verified reconciliation.
-  Notification delivery neither creates conversation records nor consumes bot quota.
+  dependencies before sending the stored snapshot. A pending `on_submit`
+  notice is cancelled with `source_cancelled` before transport when its source
+  document `docstatus` is 2. That read runs on every attempt, including after a
+  deferral, and again immediately before the handoff marker. `on_cancel`
+  notices still send. An accepted handoff is not withdrawn or resent. Open
+  conversation or human attention can defer delivery for the exact recipient
+  identities. The lock and durable handoff marker distinguish safe deferral
+  from a potentially completed send. Processing without a handoff can be
+  recovered. Once a handoff may have happened, retain Unknown pending verified
+  reconciliation. Notification delivery neither creates conversation records
+  nor consumes bot quota.
 
 Pending and Deferred work remains eligible for a future claim. Processing holds
 the durable claim. Accepted, Rejected, and Cancelled end the send lifecycle.

@@ -8,33 +8,30 @@ const vm = require("node:vm");
 	let handlers, query, resolve, secondary, confirm, copied, reloads = 0, dirty = false, admin = true;
 	const calls = [];
 	const buttons = {};
+	const groups = [];
 	const controls = [];
 	const warnings = [];
+	const statusText = [];
+	let evidence = {};
 	let callbackUrl = "https://wa.example.com/api/method/messaging.whatsapp.webhook.handler?channel=fixture";
 	const element = {
 		empty: () => element,
 		appendTo: () => element,
-		text: message => { warnings.push(message); return element; },
 	};
 	const frappe = {
-		ui: {form: {on: (_doctype, methods) => { handlers = methods; }, make_control: control => {
-			if (["Generate Token", "Copy Token", "Regenerate Token"].includes(control.df.label)) {
-				buttons[control.df.label] = control.df.click;
-			} else {
-				controls.push(control);
-			}
-		}}},
+		ui: {form: {on: (_doctype, methods) => { handlers = methods; }, make_control: control => controls.push(control)}},
 		user: {has_role: () => admin},
+		datetime: {str_to_user: value => value},
 		call(options) {
 			calls.push(options);
 			if (options.method.endsWith("channel_providers")) return new Promise(done => { resolve = done; });
-			if (options.method.endsWith("get_webhook_url")) return Promise.resolve({message: {url: callbackUrl}});
+			if (options.method.endsWith("get_webhook_url")) return Promise.resolve({message: {url: callbackUrl, evidence}});
 			return Promise.resolve({message: {token: "synthetic"}});
 		},
 		confirm: (message, callback) => { confirm = {message, callback}; },
 		utils: {copy_to_clipboard: token => { copied = token; }},
 		require: async () => {},
-		msgprint() {},
+		msgprint: message => warnings.push(message),
 		throw(message) { throw new Error(message); },
 	};
 	const parameters = {render: async () => {}, flush() {}};
@@ -45,6 +42,7 @@ const vm = require("node:vm");
 		doc: {name: "fixture", status: "Disabled", provider: "EMULR"}, perm: [{write: 1}],
 		is_new: () => true, is_dirty: () => dirty, set_query: (_field, callback) => { query = callback; },
 		fields_dict: {meta_webhook_details: {$wrapper: element}},
+		add_custom_button: (label, click, group) => { buttons[label] = click; groups.push(group); },
 		set_df_property() {}, page: {set_secondary_action: (label, callback) => { secondary = {label, callback}; }},
 		reload_doc: async () => { reloads++; },
 		set_value: async (field, value) => { frm.doc[field] = value; },
@@ -85,7 +83,11 @@ const vm = require("node:vm");
 
 	const appRoot = path.resolve(__dirname, "../../..");
 	vm.runInNewContext(fs.readFileSync(path.join(appRoot, "public/js/whatsapp_channel.js"), "utf8"), {
-		frappe, __: value => value, $: () => element,
+		frappe, __: value => value, $: (_tag, attrs) => {
+			if (attrs.role === "status") warnings.push(attrs.text);
+			else if (attrs.text) statusText.push(attrs.text);
+			return element;
+		},
 	});
 	await handlers.refresh(frm);
 	assert.equal(Object.keys(buttons).length, 0, "EMULR has no WhatsApp token actions");
@@ -101,33 +103,54 @@ const vm = require("node:vm");
 	assert.equal(controls[0].doc.webhook_callback_url, callbackUrl);
 	assert.equal(controls[0].df.label, "Webhook URL");
 	assert.equal(controls[0].df.read_only, 1);
-	controls[1].df.click();
+	assert.equal(controls.length, 1, "The webhook section has no action controls");
+	assert.deepEqual(statusText, ["Webhook Status", "URL Verification", "Unchecked", "Event Reception", "Unchecked"]);
+	buttons["Copy webhook URL"]();
 	assert.equal(copied, callbackUrl);
 	assert.equal(frm.doc.webhook_callback_url, undefined);
 	assert.equal(frm.is_dirty(), false);
-	assert.deepEqual(Object.keys(buttons), ["Generate Token"]);
+	assert.deepEqual(Object.keys(buttons), ["Copy webhook URL", "Copy verification token", "Generate verification token"]);
+	assert.deepEqual(groups, ["Webhook Actions", "Webhook Actions", "Webhook Actions"]);
 	frm.doc.modified = "2026-11-17 12:00:00.000001";
-	await buttons["Generate Token"]();
+	await buttons["Generate verification token"]();
 	assert.match(calls.at(-1).method, /generate_webhook_token$/);
 	assert.equal(calls.at(-1).type, "POST");
 	assert.equal(calls.at(-1).args.expected_modified, frm.doc.modified);
-	delete buttons["Generate Token"];
+	for (const label of Object.keys(buttons)) delete buttons[label];
+	evidence = {
+		get: {received_at: "2026-11-21 14:37:18", token_valid: true, challenge_answered: true, http_status: 200},
+		post: {received_at: "2026-11-21 14:38:19", hmac_valid: true, event_type: "messages",
+			routing: "routed", processing: "pending"},
+	};
+	statusText.length = 0;
 	frm.doc.parameters = [{parameter_key: "verify_token", secret_value: "********"}];
 	callbackUrl = null;
 	await handlers.refresh(frm);
 	assert.match(warnings.at(-1), /public HTTPS URL/);
-	assert.equal(controls.length, 2, "A local site does not get a copyable URL");
-	assert.deepEqual(Object.keys(buttons), ["Copy Token", "Regenerate Token"]);
-	await buttons["Copy Token"]();
+	assert.ok(statusText.includes("Last challenge answered successfully"));
+	assert.ok(statusText.includes(evidence.get.received_at));
+	assert.ok(statusText.includes("HTTP 200"));
+	assert.ok(statusText.includes("Signed webhook received"));
+	assert.ok(statusText.includes(evidence.post.received_at));
+	assert.ok(statusText.includes("HMAC signature"));
+	assert.ok(statusText.includes("Routed to an account"));
+	assert.ok(statusText.includes("Pending worker processing"));
+	assert.ok(!statusText.includes("Message processed"));
+	assert.equal(controls.length, 1, "A local site does not get a callback control");
+	assert.deepEqual(Object.keys(buttons), ["Copy webhook URL", "Copy verification token", "Regenerate verification token"]);
+	await buttons["Copy verification token"]();
 	assert.equal(copied, "synthetic");
 	assert.equal(frm.doc.token, undefined);
 	const requests = calls.length;
-	buttons["Regenerate Token"]();
+	await buttons["Regenerate verification token"]();
 	assert.equal(calls.length, requests, "Regeneration waits for confirmation");
-	assert.match(confirm.message, /update it in Meta/);
+	assert.match(confirm.message, /update it in Meta Developers/);
 	await confirm.callback();
 	assert.match(calls.at(-1).method, /regenerate_webhook_token$/);
 	assert.equal(calls.at(-1).type, "POST");
 	assert.equal(reloads, 4);
-	console.log("Channel selector, secondary status action, and WhatsApp token actions passed.");
+	const schema = JSON.parse(fs.readFileSync(path.join(__dirname, "communication_channel.json"), "utf8"));
+	assert.deepEqual(schema.fields.filter(field => field.fieldtype === "Tab Break").map(field => field.label),
+		["General", "Public Information"]);
+	console.log("Channel selector, status action, webhook evidence, and token menu passed.");
 })().catch(error => { console.error(error); process.exitCode = 1; });

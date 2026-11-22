@@ -1531,6 +1531,7 @@ class TestNotificationDelivery(unittest.TestCase):
         from messaging.communication.doctype.communication_template.external import synchronize_templates
         from messaging.whatsapp import admin
         from messaging.whatsapp.api import Graph
+        from messaging.whatsapp.test_whatsapp import enable_fixture_account
 
         set_provider_enabled('WHATSAPP', True)
         channel = frappe.get_doc(dict(doctype='Communication Channel', provider='WHATSAPP',
@@ -1540,14 +1541,16 @@ class TestNotificationDelivery(unittest.TestCase):
             ])).insert()
         self.channels.append(channel.name)
         admin.generate_webhook_token(channel.name, str(channel.modified))
-        set_channel_status(channel.name, 'Enabled')
+        with patch.dict(frappe.conf, host_name='https://wa.example.com'):
+            set_channel_status(channel.name, 'Enabled')
         account = frappe.get_doc(dict(doctype='Communication Channel Account', channel=channel.name,
-            account_id='199002', account_name='Synthetic named notification account', enabled=1,
+            account_id='199002', account_name='Synthetic named notification account',
             parameters=[
                 dict(parameter_key='waba_id', value='"199003"'),
                 dict(parameter_key='access_token', secret_value='synthetic-token'),
             ])).insert()
         self.accounts.append(account.name)
+        enable_fixture_account(account)
         body = 'Hello {{nombre_abonado}}, account {{numero_contrato}}. Pay {{monto_pendiente}} ({{monto_pendiente}}).'
         names = ('nombre_abonado', 'numero_contrato', 'monto_pendiente')
         template = frappe.get_doc(dict(doctype='Communication Template', channel=channel.name, account=account.name,
@@ -3050,3 +3053,325 @@ class TestSelectedNotificationChannel(ProcessFixtures, unittest.TestCase):
         bot = frappe.get_doc(dict(doctype='Bot Flow Template', language='es', enabled=1, body='{{message}}', template_variables=[dict(parameter_name='message')]))
         with self.assertRaisesRegex(frappe.ValidationError, 'reserved'):
             validate_template_content(bot)
+
+
+PROCESS_ID = "messaging.test_submit_cancellation"
+
+
+def submit_cancellation_def(*, params, outcomes):
+    outcomes.register("send", fields={"recipient": "string", "notice_text": "string"}, mode=["template"])
+
+
+def submit_cancellation_handler(request: NotifyRequest) -> NotifyResponse | NotifyNoResponse:
+    """Stable synthetic notice. Cancellation is decided by the dispatcher, not the handler."""
+    if request.source.doctype != "Emulator Contact" or request.event not in ("on_submit", "on_cancel", "on_update"):
+        raise ValueError("Invalid synthetic lifecycle event")
+    return NotifyResponse("send", data={"recipient": "", "notice_text": "Synthetic lifecycle notice"})
+
+
+class TestSubmitCancellation(unittest.TestCase):
+    """Pending on_submit delivery stops when the source document is cancelled."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.original_states = get_provider_states()
+        cls.original_user = frappe.session.user
+        frappe.set_user("Administrator")
+        cls.network = patch("requests.sessions.Session.request", side_effect=AssertionError("External network forbidden"))
+        cls.network.start()
+        set_provider_enabled("EMULR", True)
+        cls.created_channel = None
+        if not frappe.db.exists("Communication Channel", "emulator"):
+            channel = frappe.get_doc(dict(doctype="Communication Channel", provider="EMULR", channel_name="Synthetic lifecycle channel")).insert()
+            set_channel_status(channel.name, "Enabled")
+            cls.created_channel = channel.name
+        from frappe.permissions import add_permission
+        add_permission("Emulator Contact", "Messaging Automation", ptype="read")
+        frappe.clear_cache(doctype="Emulator Contact")
+        with patch("messaging.registry.processes.discovery.retire_definitions", return_value=[]):
+            register_processes(app="messaging", processes=[NotifyProcess(
+                id=PROCESS_ID, label="Submit cancellation notice",
+                definition=submit_cancellation_def, handler=submit_cancellation_handler,
+            )])
+        frappe.db.commit()
+
+    @classmethod
+    def tearDownClass(cls):
+        frappe.set_user("Administrator")
+        from messaging.communication.doctype.process_definition.process_definition import _registry_write
+        if frappe.db.exists("Process Definition", PROCESS_ID):
+            with _registry_write():
+                frappe.delete_doc("Process Definition", PROCESS_ID, force=1, ignore_permissions=True)
+        if cls.created_channel and frappe.db.exists("Communication Channel", cls.created_channel):
+            frappe.delete_doc("Communication Channel", cls.created_channel, force=1, ignore_permissions=True)
+        _lock_provider_states()
+        _write_provider_states(cls.original_states)
+        invalidate_rules()
+        frappe.db.commit()
+        cls.network.stop()
+        frappe.set_user(cls.original_user)
+
+    def setUp(self):
+        frappe.set_user("Administrator")
+        original_get_meta = frappe.get_meta
+
+        def submittable_meta(doctype, cached=True):
+            meta = original_get_meta(doctype, cached=cached)
+            if doctype == "Emulator Contact":
+                meta.is_submittable = 1
+            return meta
+
+        self.meta_patch = patch("frappe.get_meta", side_effect=submittable_meta)
+        self.meta_patch.start()
+        self.rules, self.contacts, self.accounts, self.templates, self.logs = [], [], [], [], []
+        self.destination = self.contact("Lifecycle destination")
+        self.account = self.account_doc()
+        self.template = self.template_doc()
+        frappe.db.commit()
+
+    def tearDown(self):
+        frappe.set_user("Administrator")
+        self.meta_patch.stop()
+        self._cleanup()
+        invalidate_rules()
+        frappe.db.commit()
+
+    def _cleanup(self):
+        rules, contacts, accounts, templates = self.rules, self.contacts, self.accounts, self.templates
+        if contacts:
+            frappe.db.delete("Notification Queue", {"source_name": ["in", contacts]})
+            frappe.db.delete("Notification Queue", {"emulator_contact": ["in", contacts]})
+            frappe.db.delete("Process Execution Log", {"source_document": ["in", contacts]})
+        if rules:
+            frappe.db.delete("Notification Queue", {"notification_rule": ["in", rules]})
+            frappe.db.delete("Process Execution Log", {"source_name": ["in", rules]})
+            for child in ("Notification Rule Event", "Notification Outcome", "Notification Process Parameter", "Communication Provider Value"):
+                frappe.db.delete(child, {"parent": ["in", rules]})
+            frappe.db.delete("Notification Rule", {"name": ["in", rules]})
+        parents = templates + accounts + rules
+        if parents:
+            frappe.db.delete("Communication Provider Value", {"parent": ["in", parents]})
+        if templates:
+            frappe.db.delete("Communication Template Parameter", {"parent": ["in", templates]})
+            frappe.db.delete("Communication Template", {"name": ["in", templates]})
+        for name in accounts:
+            if frappe.db.exists("Communication Channel Account", name):
+                frappe.delete_doc("Communication Channel Account", name, force=1, ignore_permissions=True)
+        for name in contacts:
+            if not frappe.db.exists("Emulator Contact", name):
+                continue
+            sender = frappe.db.get_value("Emulator Contact", name, "sender_id")
+            if sender:
+                frappe.db.delete("Notification Queue", {"effective_recipient": sender})
+            if frappe.db.get_value("Emulator Contact", name, "docstatus") == 1:
+                # The synthetic DocType is submittable only inside this test.
+                frappe.db.set_value("Emulator Contact", name, "docstatus", 0, update_modified=False)
+            frappe.delete_doc("Emulator Contact", name, force=1, ignore_permissions=True)
+
+    def contact(self, label):
+        with patch.object(events, "rule_index", return_value={}):
+            doc = frappe.get_doc(dict(doctype="Emulator Contact", display_name=label, enabled=1)).insert()
+        self.contacts.append(doc.name)
+        return doc
+
+    def account_doc(self):
+        doc = frappe.get_doc(dict(
+            doctype="Communication Channel Account", channel="emulator",
+            account_id="synthetic-" + frappe.generate_hash(length=12),
+            account_name="Synthetic lifecycle account", enabled=1,
+        )).insert()
+        self.accounts.append(doc.name)
+        return doc
+
+    def template_doc(self):
+        doc = frappe.get_doc(dict(
+            doctype="Communication Template", channel="emulator", status="Active", language="es",
+            template_name="Lifecycle " + frappe.generate_hash(length=8),
+            body="{{notice_text}}", template_variables=[dict(parameter_name="notice_text")],
+        )).insert()
+        self.templates.append(doc.name)
+        return doc
+
+    def rule(self, event):
+        from messaging.communication.doctype.notification_rule.notification_rule import set_active, validate_process
+        doc = frappe.get_doc(dict(
+            doctype="Notification Rule", status="Untested", notification_delay_minutes=60,
+            rule_name="Lifecycle " + event + " " + frappe.generate_hash(length=8),
+            source_application="messaging", source_doctype="Emulator Contact",
+            events=[dict(document_event=event)], account=self.account.name,
+            parameters=[dict(parameter_key="notification_contact", value=json.dumps(self.destination.name))],
+            process_definition=PROCESS_ID,
+            outputs=[dict(status_code="send", output_mode="Template", template_reference=self.template.name, send=1)],
+        )).insert()
+        self.rules.append(doc.name)
+        frappe.db.commit()
+        doc.reload()
+        result = validate_process(doc.as_dict())
+        self.assertEqual(result["status"], "Passed", result)
+        doc.reload()
+        self.assertEqual(set_active(doc.as_dict(), 1)["consumer_status"], "Enabled")
+        doc.reload()
+        frappe.db.commit()
+        return doc
+
+    def queue_for(self, rule, source):
+        name = frappe.db.get_value("Notification Queue", {"notification_rule": rule.name, "source_name": source.name}, "name")
+        self.assertTrue(name)
+        queue = frappe.get_doc("Notification Queue", name)
+        self.assertEqual((queue.source_doctype, queue.source_name, queue.document_event), (source.doctype, source.name, rule.events[0].document_event))
+        self.assertEqual(queue.status, "Pending")
+        return queue
+
+    def due(self, queue):
+        return dispatch.deliver(queue.name, now=get_datetime(queue.next_attempt_at) + timedelta(seconds=1))
+
+    def send_spy(self):
+        """Count provider send calls without replacing the registered EMULR function."""
+        calls = []
+
+        def spy(definition, name, *args, orig):
+            calls.append(name)
+            return orig(definition, name, *args)
+
+        return calls, patch_transport_operation(provider_catalog, "send", spy)
+
+    def test_submitted_document_is_sent(self):
+        rule = self.rule("on_submit")
+        source = self.contact("Lifecycle submit")
+        source.submit()
+        frappe.db.commit()
+        self.assertEqual(source.docstatus, 1)
+        queue = self.queue_for(rule, source)
+        calls, spy = self.send_spy()
+        with spy:
+            self.assertEqual(self.due(queue)["state"], "Accepted")
+            self.assertEqual(calls, ["send"])
+            queue.reload()
+            accepted = (queue.status, queue.delivery_status, queue.transport_reference, queue.attempt_count)
+            self.due(queue)
+        queue.reload()
+        self.assertEqual(queue.status, "Accepted")
+        self.assertEqual(queue.delivery_status, "Sent")
+        self.assertTrue(queue.handoff_at)
+        self.assertEqual(queue.transport_reference, accepted[2])
+        self.assertEqual(queue.attempt_count, accepted[3])
+        self.assertEqual(calls, ["send"])
+        self.assertEqual(frappe.db.get_value(source.doctype, source.name, "docstatus"), 1)
+
+    def test_cancelled_submit_is_omitted_without_provider_call(self):
+        rule = self.rule("on_submit")
+        source = self.contact("Lifecycle cancel before send")
+        source.submit()
+        frappe.db.commit()
+        queue = self.queue_for(rule, source)
+        source.cancel()
+        frappe.db.commit()
+        self.assertEqual(frappe.db.get_value(source.doctype, source.name, "docstatus"), 2)
+        calls, spy = self.send_spy()
+        with spy:
+            self.assertEqual(self.due(queue)["state"], "Cancelled")
+            queue.reload()
+            attempts = queue.attempt_count
+            self.assertEqual(self.due(queue)["state"], "Cancelled")
+        queue.reload()
+        self.assertEqual(calls, [])
+        self.assertEqual(queue.status, "Cancelled")
+        self.assertEqual(queue.diagnostic_code, "source_cancelled")
+        self.assertFalse(queue.handoff_at)
+        self.assertFalse(queue.transport_reference)
+        self.assertNotEqual(queue.delivery_status, "Sent")
+        self.assertEqual(queue.attempt_count, attempts)
+        self.assertEqual(frappe.db.count("Notification Queue", {"occurrence_key": queue.occurrence_key}), 1)
+
+    def test_cancel_event_still_sends(self):
+        rule = self.rule("on_cancel")
+        source = self.contact("Lifecycle cancel event")
+        source.submit()
+        frappe.db.commit()
+        self.assertFalse(frappe.db.exists("Notification Queue", {"notification_rule": rule.name, "source_name": source.name}))
+        source.cancel()
+        frappe.db.commit()
+        self.assertEqual(source.reload().docstatus, 2)
+        queue = self.queue_for(rule, source)
+        calls, spy = self.send_spy()
+        with spy:
+            self.assertEqual(self.due(queue)["state"], "Accepted")
+            self.assertEqual(calls, ["send"])
+        queue.reload()
+        self.assertEqual((queue.status, queue.delivery_status), ("Accepted", "Sent"))
+        self.assertTrue(queue.handoff_at)
+        self.assertEqual(frappe.db.get_value(source.doctype, source.name, "docstatus"), 2)
+
+    def test_deferred_retry_omits_after_cancellation(self):
+        rule = self.rule("on_submit")
+        source = self.contact("Lifecycle retry")
+        source.submit()
+        frappe.db.commit()
+        queue = self.queue_for(rule, source)
+
+        def fail_validate(definition, name, *args, orig):
+            raise RuntimeError("synthetic transient validation")
+
+        calls, spy = self.send_spy()
+        with spy, patch_transport_operation(dispatch, "validate_notification", fail_validate):
+            self.assertEqual(self.due(queue)["state"], "Deferred")
+        queue.reload()
+        self.assertEqual(calls, [])
+        self.assertEqual(queue.diagnostic_code, "content_validation_unavailable")
+        self.assertFalse(queue.handoff_at)
+        source.cancel()
+        frappe.db.commit()
+        queue.reload()
+        calls, spy = self.send_spy()
+        with spy:
+            self.assertEqual(self.due(queue)["state"], "Cancelled")
+            queue.reload()
+            attempts = queue.attempt_count
+            self.assertEqual(self.due(queue)["state"], "Cancelled")
+        queue.reload()
+        self.assertEqual(calls, [])
+        self.assertEqual(queue.status, "Cancelled")
+        self.assertEqual(queue.diagnostic_code, "source_cancelled")
+        self.assertFalse(queue.handoff_at)
+        self.assertFalse(queue.transport_reference)
+        self.assertEqual(queue.attempt_count, attempts)
+
+    def test_accepted_send_is_not_withdrawn_after_cancellation(self):
+        rule = self.rule("on_submit")
+        source = self.contact("Lifecycle already sent")
+        source.submit()
+        frappe.db.commit()
+        queue = self.queue_for(rule, source)
+        calls, spy = self.send_spy()
+        with spy:
+            self.assertEqual(self.due(queue)["state"], "Accepted")
+            queue.reload()
+            reference, attempts = queue.transport_reference, queue.attempt_count
+            source.cancel()
+            frappe.db.commit()
+            self.assertEqual(frappe.db.get_value(source.doctype, source.name, "docstatus"), 2)
+            self.assertEqual(self.due(queue)["state"], "Accepted")
+            self.assertEqual(calls, ["send"])
+        queue.reload()
+        self.assertEqual(queue.status, "Accepted")
+        self.assertEqual(queue.delivery_status, "Sent")
+        self.assertEqual(queue.transport_reference, reference)
+        self.assertEqual(queue.attempt_count, attempts)
+        self.assertEqual(frappe.db.count("Notification Queue", {"notification_rule": rule.name, "source_name": source.name}), 1)
+
+    def test_update_notice_still_sends_when_document_docstatus_is_cancelled(self):
+        rule = self.rule("on_update")
+        source = self.contact("Lifecycle update")
+        source.display_name = "Lifecycle update changed"
+        source.save()
+        frappe.db.commit()
+        queue = self.queue_for(rule, source)
+        frappe.db.set_value(source.doctype, source.name, "docstatus", 2, update_modified=False)
+        frappe.db.commit()
+        calls, spy = self.send_spy()
+        with spy:
+            self.assertEqual(self.due(queue)["state"], "Accepted")
+            self.assertEqual(calls, ["send"])
+        queue.reload()
+        self.assertEqual(queue.status, "Accepted")
+        self.assertEqual(queue.document_event, "on_update")

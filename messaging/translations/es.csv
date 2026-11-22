@@ -2717,7 +2717,16 @@ Invalid WhatsApp template component.,Componente de plantilla de WhatsApp no vál
 Invalid WhatsApp template identity.,Identidad de plantilla de WhatsApp no válida.
 WhatsApp templates require a nonempty body.,Las plantillas de WhatsApp requieren un cuerpo con contenido.
 Invalid WhatsApp account configuration.,Configuración de cuenta de WhatsApp no válida.
-Meta could not complete the WhatsApp operation.,Meta no pudo completar la operación de WhatsApp.
+WhatsApp phone number lookup,Consulta del número de WhatsApp
+Could not reach Meta while running {0}.,No se pudo conectar con Meta durante la operación «{0}».
+Meta returned an unexpected response while running {0}.,Meta devolvió una respuesta inesperada durante la operación «{0}».
+"The resource is unavailable, the operation is unsupported, or the token lacks access.","El recurso no está disponible, la operación no es compatible o el token carece de acceso."
+Meta did not accept a parameter or the requested resource does not support this operation.,Meta rechazó un parámetro o el recurso solicitado no admite esta operación.
+"Meta did not accept the access token. It may be invalid, expired, or revoked.","Meta rechazó el token de acceso. Puede ser inválido, haber caducado o haber sido revocado."
+The token does not have the permissions required for this operation.,El token carece de los permisos necesarios para esta operación.
+Meta reported an error for this operation.,Meta informó de un error para esta operación.
+"{0} failed (Meta code {1}, subcode {2}). {3}","Falló «{0}» (código {1} de Meta, subcódigo {2}). {3}"
+{0} failed (Meta code {1}). {2},Falló «{0}» (código {1} de Meta). {2}
 Invalid WhatsApp operation.,Operación de WhatsApp no válida.
 Select a WhatsApp template identity and category.,Seleccione la identidad y la categoría de la plantilla de WhatsApp.
 Enter an example for each WhatsApp template variable.,Ingrese un ejemplo para cada variable de la plantilla de WhatsApp.
@@ -2735,29 +2744,26 @@ Variable Examples (JSON),Ejemplos de variables (JSON)
 Update existing Meta template,Actualizar la plantilla existente en Meta
 WhatsApp Actions,Acciones de WhatsApp
 Check Meta connectivity,Comprobar la conexión con Meta
-Check WABA subscription,Consultar la suscripción de WhatsApp Business
-Subscribe Meta app,Suscribir la aplicación de Meta
-Subscribed Meta apps: {0},Aplicaciones de Meta suscritas: {0}
 None,Ninguna
-Meta operation succeeded.,La operación de Meta se completó correctamente.
-Meta operation did not confirm success.,Meta no confirmó que la operación se completara.
-Subscribe the Meta app to this WABA?,¿Suscribir la aplicación de Meta a esta cuenta de WhatsApp Business?
+Meta confirmed access to the configured WhatsApp phone number.,Meta confirmó el acceso al número de WhatsApp configurado.
 Unsupported message type,Tipo de mensaje no compatible
 Change the channel status using its enable or disable action.,Cambie el estado del canal con su acción de habilitar o deshabilitar.
 The channel provider is unavailable and the channel cannot be enabled.,El proveedor del canal no está disponible y no se puede habilitar el canal.
 Invalid channel status.,Estado del canal no válido.
 Channel status changed concurrently. Reload the channel and retry.,El estado del canal cambió al mismo tiempo. Recargue el canal y vuelva a intentarlo.
 Save pending changes before changing channel status.,Guarde los cambios pendientes antes de cambiar el estado del canal.
-Copy Token,Copiar token
-Generate Token,Generar token
-Regenerate Token,Regenerar token
+Webhook Actions,Acciones de webhook
+Copy webhook URL,Copiar URL del webhook
+Copy verification token,Copiar token de verificación
+Generate verification token,Generar token de verificación
+Regenerate verification token,Regenerar token de verificación
 Select a WhatsApp channel.,Seleccione un canal de WhatsApp.
 Generate a webhook verify token first.,Genere primero un token de verificación del webhook.
 Save pending changes before changing the webhook verify token.,Guarde los cambios pendientes antes de cambiar el token de verificación del webhook.
 Change the webhook verify token using its administrative actions.,Cambie el token de verificación del webhook mediante sus acciones administrativas.
 The channel changed. Reload it before changing the webhook verify token.,El canal cambió. Vuelva a cargarlo antes de cambiar el token de verificación del webhook.
 A webhook verify token already exists.,Ya existe un token de verificación del webhook.
-Regenerate the webhook verify token? You will need to update it in Meta.,¿Regenerar el token de verificación del webhook? Deberá actualizarlo en Meta.
+Regenerate the webhook verify token? You will need to update it in Meta Developers.,¿Regenerar el token de verificación del webhook? Deberá actualizarlo en Meta Developers.
 Administrative Status,Estado administrativo
 Local Revision,Revisión local
 Published Revision,Revisión publicada
@@ -2901,3 +2907,131 @@ Only untested or unavailable AI profiles can start an evaluation.,Solo los perfi
 Decision Acceptance,Aceptación de decisiones
 Decision acceptance settings require an internal Decision profile.,Los criterios de aceptación requieren un perfil interno de decisión.
 Decision acceptance thresholds must be greater than 0.5 and at most 1.,Los umbrales de decisión deben ser mayores que 0.5 y como máximo 1.
+Messaging Account ID,ID de la cuenta de mensajería
+Phone Number ID,ID del número de teléfono
+WhatsApp Number,Número de WhatsApp
+Webhook,Webhook
+Unchecked,Sin comprobar
+Confirmed,Comprobado
+Rejected by Meta,Consulta rechazada por Meta
+Connection error,Error de conectividad
+Inconclusive,No concluyente
+Checked at,Fecha y hora de comprobación
+Request,Solicitud
+Response,Respuesta
+HTTP Method,Método HTTP
+Endpoint,Endpoint
+Query parameters,Parámetros de consulta
+Technical ID,Identificador técnico
+Meta error code,Código de error de Meta
+Meta error subcode,Subcódigo de error de Meta
+Meta trace ID,ID de trazabilidad de Meta
+Check connection,Comprobar conexión
+Configured locally,Configurado localmente
+Incomplete local configuration,Configuración local incompleta
+Channel status,Estado del canal
+Provider status,Estado del proveedor
+Webhook configuration,Configuración del webhook
+Meta webhook verification,Verificación del webhook en Meta
+Last known message receipt,Última recepción conocida de un mensaje
+Signature and account routing,Firma y enrutamiento a la cuenta
+A previous signed webhook was routed to this account.,Un webhook firmado anterior se enrutó a esta cuenta.
+Account status,Estado de la cuenta
+Last Diagnostics,Últimos diagnósticos
+Subscriptions,Suscripciones
+Check subscriptions,Consultar suscripciones
+Subscription confirmed,Suscripción confirmada
+Not subscribed,No suscrita
+Subscribed applications,Aplicaciones suscritas
+Showing {0} of {1} application IDs.,Se muestran {0} de {1} ID de aplicaciones.
+Historical ({0}),Histórico ({0})
+Signed webhook received,Webhook firmado recibido
+Signed webhook receipt,Recepción de webhook firmado
+WhatsApp Business subscriptions lookup,Consulta de suscripciones de WhatsApp Business
+Meta listed the configured app among the subscriptions for this Messaging Account.,Meta incluyó la aplicación configurada entre las suscritas a esta cuenta de mensajería.
+Meta returned the complete subscription list without the configured app.,Meta devolvió la lista completa de suscripciones y la aplicación configurada no figura en ella.
+Set the Meta App ID on the channel to determine its subscription status.,Configure el ID de la aplicación de Meta en el canal para determinar el estado de su suscripción.
+Save pending account changes before running diagnostics or changing its status.,Guarde los cambios pendientes de la cuenta antes de ejecutar diagnósticos o cambiar su estado.
+Disable this number in Messaging?,¿Deshabilitar este número en Messaging?
+Check and enable,Comprobar y habilitar
+Configure a public HTTPS site origin before enabling the WhatsApp channel.,Configure el origen público HTTPS del sitio antes de habilitar el canal de WhatsApp.
+Configure the Meta App Secret and webhook verify token before enabling the WhatsApp channel.,Configure el secreto de la aplicación de Meta y el token de verificación del webhook antes de habilitar el canal de WhatsApp.
+Only a successful Meta lookup can change the WhatsApp number.,Solo una consulta satisfactoria a Meta puede cambiar el número de WhatsApp.
+Change the WhatsApp account status using its administrative actions.,Cambie el estado de la cuenta de WhatsApp mediante sus acciones administrativas.
+Use numeric values for the Phone Number ID and Messaging Account ID.,Use valores numéricos para el ID del número de teléfono y el ID de la cuenta de mensajería.
+The WhatsApp configuration changed. Reload the account and retry.,La configuración de WhatsApp cambió. Recargue la cuenta y vuelva a intentarlo.
+The WhatsApp provider is unavailable.,El proveedor de WhatsApp no está disponible.
+Meta returned a different Phone Number ID.,Meta devolvió un ID de número de teléfono diferente.
+Meta denied access to this operation.,Meta denegó el acceso a esta operación.
+Status summary,Resumen de estado
+Meta connection,Conexión con Meta
+Review the Meta app and public webhook settings on the channel.,Revise la configuración de la aplicación de Meta y del webhook público en el canal.
+Public Information,Información pública
+Public Organization Details,Datos públicos de la organización
+Legal Entity or Organization,Responsable legal u organización
+Public Service Name,Nombre público de la aplicación o servicio
+Public Contact Email,Correo electrónico de contacto público
+Official Website,Sitio web oficial
+Additional Public Contact Details,Información pública adicional de contacto
+Public Service Description,Descripción pública del servicio
+Public Documents,Documentos públicos
+Privacy Policy,Política de privacidad
+Terms of Service,Condiciones del servicio
+Data Deletion Instructions,Instrucciones para eliminación de datos
+Draft,Borrador
+Published,Publicado
+Draft Content,Contenido del borrador
+Save Draft,Guardar borrador
+Use Standard Template,Usar plantilla estándar
+Replace the editor content with the standard template?,¿Reemplazar el contenido del editor por la plantilla estándar?
+Draft Preview,Vista previa del borrador
+Edit Draft,Editar borrador
+Preview Draft,Previsualizar borrador
+Publish Updated Draft,Publicar borrador actualizado
+Withdraw Publication,Retirar de publicación
+Have you reviewed the saved draft and contact details for public release?,¿Revisó el borrador guardado y los datos de contacto para su publicación?
+Withdraw this document from its public URL?,¿Retirar este documento de su URL pública?
+Copy Public URL,Copiar URL pública
+Configure a public HTTPS site origin to copy the public URL.,Configure un origen público HTTPS en el sitio para copiar la URL pública.
+Save the channel to manage its public documents.,Guarde el canal para administrar sus documentos públicos.
+Save pending channel changes before continuing.,Guarde los cambios pendientes del canal antes de continuar.
+"Use each published URL in its corresponding field in Meta Developers. The fields are Privacy Policy URL, Terms of Service URL, and Data Deletion Instructions URL.","En Meta Developers use cada URL publicada en su campo correspondiente. Los campos son URL de la política de privacidad, URL de condiciones del servicio y URL de instrucciones para la eliminación de datos."
+Last Updated,Última actualización
+Use the public document actions to change publication.,Use las acciones de documentos públicos para cambiar su publicación.
+Select a public document.,Seleccione un documento público.
+Save a draft before previewing it.,Guarde un borrador antes de previsualizarlo.
+The channel changed. Reload it and review the document again.,El canal cambió. Recárguelo y revise nuevamente el documento.
+Select a publication action.,Seleccione una acción de publicación.
+"Enter a public organization, service name, and contact email before publishing.","Ingrese la organización, el nombre del servicio y el correo de contacto públicos antes de publicar."
+Enter one valid public contact email.,Ingrese un solo correo de contacto público válido.
+Enter a valid HTTP or HTTPS address for the official website.,Ingrese una dirección HTTP o HTTPS válida para el sitio web oficial.
+Complete all draft sections before publishing.,Complete todos los apartados del borrador antes de publicar.
+Page not found,Página no encontrada
+Webhook Status,Estado del webhook
+URL Verification,Verificación de la URL
+Last challenge answered successfully,Último desafío respondido correctamente
+Verification Token,Token de verificación
+Event Reception,Recepción de eventos
+Received at,Fecha y hora de recepción
+Event type,Tipo de evento
+HMAC signature,Firma HMAC
+Messages,Mensajes
+Template status,Estado de plantilla
+Multiple event types,Varios tipos de evento
+Other event,Otro evento
+Routing,Enrutamiento
+Account routing unconfirmed,Enrutamiento a una cuenta sin confirmar
+Account matched,Cuenta asociada
+Routed to an account,Enrutado a una cuenta
+Processing Status,Estado de procesamiento
+Message receipt recorded,Recepción del mensaje registrada
+Pending worker processing,Pendiente de procesamiento por un worker
+Processing in progress,Procesamiento en curso
+Processing requires recovery,El procesamiento requiere recuperación
+Message ignored,Mensaje ignorado
+Automation paused for human support,Automatización pausada por atención humana
+Processing stopped by quota,Procesamiento detenido por cuota
+Message processed,Mensaje procesado
+Delivery report handled,Informe de entrega atendido
+Template status refresh scheduled,Actualización del estado de plantilla programada
+Processing unconfirmed,Procesamiento sin confirmar
