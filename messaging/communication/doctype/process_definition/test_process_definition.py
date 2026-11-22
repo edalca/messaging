@@ -6,7 +6,7 @@ import subprocess
 import signal
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import DEFAULT, patch
 
 import frappe
 
@@ -46,6 +46,33 @@ def alternate_flow(*, params, outcomes):
 
 def alternate_business(request: BotRequest) -> BotResponse:
     return BotResponse('success', message='Alternate result')
+
+
+def native_read_flow(*, params, outcomes):
+    params.register('check_permission', type='boolean', required=False)
+    outcomes.register('success', fields={}, mode=['message'], action='complete_flow')
+
+
+def native_read_business(request: BotRequest) -> BotResponse:
+    doctype, name = 'Role', 'System Manager'
+    doc = frappe.get_doc(doctype, name)
+    if request.params.get('check_permission'):
+        doc.check_permission('read')
+    reads = (
+        frappe.db.exists(doctype, name, cache=True),
+        frappe.db.get_value(doctype, name, 'name'),
+        frappe.get_cached_doc(doctype, name).name,
+        *frappe.get_all(doctype, filters={'name': name}, pluck='name'),
+    )
+    if reads != (doc.name,) * 4:
+        raise AssertionError('Native document reads changed')
+    if frappe.has_permission(doctype, 'read', doc=doc):
+        raise AssertionError('The role must be unreadable by this identity')
+    try:
+        frappe.get_list(doctype, filters={'name': name})
+    except frappe.PermissionError:
+        return BotResponse('success', message='Native read policy preserved')
+    raise AssertionError('Permission-aware list permitted the read')
 
 
 def negative_flow(*, params, outcomes):
@@ -183,6 +210,7 @@ def invalid_discovery_schema(*, params, outcomes):
 DECLARATION_HANDLERS = {
     'technical_flow': 'technical_business',
     'alternate_flow': 'alternate_business',
+    'native_read_flow': 'native_read_business',
     'negative_flow': 'negative_business',
     'technical_notification': 'notification_business',
     'technical_skip': 'skip_business',
@@ -559,6 +587,35 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         with self.assertRaises(frappe.ValidationError):context._bind_handler(typed_business)
         self.assertEqual(run_handler(definition, execution_context(definition.process_id,'bot_flow','es',False,_freeze(values)),{}),response)
 
+    def test_registered_handler_uses_native_document_read_permissions(self):
+        from messaging.security.execution_context import _automation_context, authorized_process, require_automation_process
+
+        definition = self.definition('native_read_flow')
+        execution = dict(source_type='Bot Flow', source_name='test-flow')
+
+        def run(**arguments):
+            context = execution_context(definition.process_id, 'bot_flow', 'en', False, _freeze(arguments))
+            return run_handler(definition, context, execution)
+
+        with _automation_context():
+            doc = frappe.get_doc('Role', 'System Manager')
+            with self.assertRaises(frappe.PermissionError):
+                doc.check_permission('read')
+            with self.assertRaises(frappe.PermissionError):
+                run()
+            with authorized_process(technical_business.__module__ + '.technical_business', **execution):
+                with self.assertRaises(frappe.PermissionError):
+                    run()
+            with authorized_process(definition.method, **execution):
+                self.assertEqual(run()['status'], 'success')
+                with self.assertRaises(frappe.PermissionError):
+                    run(check_permission=True)
+            with self.assertRaises(frappe.PermissionError):
+                require_automation_process(definition.method)
+            self.assertEqual(frappe.db.exists(doc.doctype, doc.name), doc.name)
+            with self.assertRaises(frappe.PermissionError):
+                doc.check_permission('read')
+
     def test_real_execution_rejects_unknown_status_extra_and_wrong_typed_fields(self):
         cases = [BotResponse('unknown'), BotResponse('success',{'value':1}),
             BotResponse('success',{'value':'ok','private':'other'}), {'status':'success'}]
@@ -784,6 +841,64 @@ def prepare_empty_notification(request: NotifyRequest) -> NotifyResponse | Notif
     assert not request.params
     assert request.source.doctype == 'ToDo'
     return NotifyResponse('ready')
+
+
+class TestProcessEffects(unittest.TestCase):
+    def test_write_proof_and_native_document_permission_behavior(self):
+        from messaging.security.execution_context import _automation_context, authorized_process, require_automation_process
+
+        path = native_read_business.__module__ + '.native_read_business'
+        execution = dict(source_type='Bot Flow', source_name='test-flow',
+            session='test-session', turn='test-turn', execution_id='test-execution')
+        sql = frappe.db.sql
+        writes = []
+
+        def capture_sql(query, *args, **kwargs):
+            statement = str(query).strip().upper()
+            if statement.startswith('INSERT INTO `TABROLE`'):
+                writes.append(query)
+                return ()
+            self.assertTrue(statement.startswith(('SELECT ', 'SHOW ', 'DESC ')))
+            return sql(query, *args, **kwargs)
+
+        with _automation_context():
+            self.assertFalse(frappe.has_permission('Role', 'create'))
+            with patch.object(frappe.db, 'sql', side_effect=capture_sql), patch.multiple(
+                frappe, enqueue=DEFAULT, sendmail=DEFAULT, set_user=DEFAULT, publish_realtime=DEFAULT,
+            ) as effects:
+                with process.effect_boundary(dict(execution, path=path)):
+                    with self.assertRaises(frappe.PermissionError):
+                        frappe.get_doc(dict(doctype='Role', role_name='Test Effect')).db_insert()
+                with authorized_process(path, **execution):
+                    proof = require_automation_process(path)
+                    with process.effect_boundary(proof):
+                        doc = frappe.get_doc(dict(doctype='Role', role_name='Test Effect'))
+                        with self.assertRaises(frappe.PermissionError):
+                            doc.insert()
+                        self.assertEqual(writes, [])
+                        doc.db_insert()
+                        self.assertEqual(len(writes), 1)
+                        with self.assertWarns(UserWarning):
+                            frappe.db.commit()
+                        for operation in (
+                            lambda: frappe.db.sql('SELECT 1'),
+                            lambda: frappe.db.multisql({frappe.db.db_type: 'SELECT 1'}),
+                            lambda: frappe.db.set_value('Role', doc.name, 'desk_access', 0),
+                            lambda: frappe.db.after_commit.add(lambda: None),
+                            lambda: frappe.enqueue('invalid.test'),
+                            lambda: frappe.sendmail(recipients=['invalid@example.test']),
+                            lambda: frappe.set_user('Guest'),
+                            lambda: frappe.publish_realtime('test'),
+                        ):
+                            with self.assertRaises(frappe.PermissionError):
+                                operation()
+                    self.assertEqual(require_automation_process(path), proof)
+                with self.assertRaises(frappe.PermissionError):
+                    require_automation_process(path)
+                self.assertIsNotNone(frappe.db.sql('SELECT 1'))
+                self.assertEqual(len(writes), 1)
+                for effect in effects.values():
+                    effect.assert_not_called()
 
 
 class TestUnifiedProcessAPI(ProcessFixtures, unittest.TestCase):

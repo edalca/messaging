@@ -211,16 +211,22 @@ process = BotProcess(id="example.reference", label="Reference lookup",
 
 [execution.py](messaging/communication/doctype/process_definition/execution.py)
 owns `execute_process`. It reloads the persisted consumer, resolves the
-available definition of the correct type, checks approval, deployed sources,
-signature, policy and native permissions, then invokes the verified handler.
-Arbitrary client-provided Python paths are outside this contract. The runtime
-enforces a 30-second signal-based deadline, guarded document access, a
-savepoint, and redacted evidence in Process Execution Log. Keep business reads
-and allowed writes within the document boundary. Retain field-level permissions,
-the exact automation context, and transaction control. Direct SQL, hidden commits,
-and external side effects are outside the callback contract. Static inspection
-also rejects UI output from Process code. Use the existing type-specific
-guarded helpers such as `decimal_rows` where exact decimal reads are required.
+available definition of the correct type, checks invocation authorization,
+approval, deployed sources, signature and context, then invokes the verified
+handler. Arbitrary client-provided Python paths are outside this contract. The
+runtime enforces a 30-second signal-based deadline, a savepoint, and redacted
+evidence in Process Execution Log. Writes require an exact operational proof and
+use native document persistence inside the executor's transaction. Direct SQL,
+hidden commits, and external side effects are outside the callback contract.
+Static inspection also rejects UI output from Process code.
+
+The handler owns business document selection, operations, validation, and
+response data. Messaging adds no business document or field permission checks
+to native server-side APIs used by the handler. Frappe applies the permission
+behavior of the selected API, including explicit `frappe.has_permission()` and
+`doc.check_permission()` calls. The service identity needs only the permissions
+required by Messaging itself and by the operations that the handler chooses.
+Use `decimal_rows` for exact decimal reads from handler-selected records.
 Process Definition preserves both `definition_method` and `method`, the
 registered contract and source snapshot, and the contract and capability
 revisions. Treat document recreation as a new approval identity. The explicit

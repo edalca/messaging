@@ -1,4 +1,4 @@
-"""Authorized Code-First execution, native document mediation and transaction boundaries."""
+"""Authorized Code-First execution and transaction boundaries."""
 
 import hashlib
 import inspect
@@ -20,40 +20,15 @@ from messaging.communication.doctype.process_definition.process_definition impor
     DOTTED_METHOD_PATH_PATTERN,
     FORBIDDEN_PROCESS_PREFIXES,
     FORBIDDEN_PROCESS_ROOT_MODULES,
-    MAX_ROWS,
-    _check_document,
     _decimal_values,
-    _denied,
-    _doctype,
-    _document,
-    _document_operation,
-    _effect,
-    _fields,
-    _filter_fields,
-    _install,
-    _install_guard,
-    _internal,
-    _native,
-    _native_write,
-    _reading,
-    _reject,
-    _require_write_execution,
-    _rows,
-    _scope,
-    _TECHNICAL_READS,
     _testing,
-    _value,
     bind_definition,
-    controlled_reads,
-    decimal_rows,
     effect_boundary,
-    install_read_access,
     is_process_test,
     process_messages,
     process_profile_value,
     read_boundary,
     validate_process_method_path,
-    verify_read_query,
 )
 from messaging.communication.doctype.process_execution_log.process_execution_log import (
 	record_process_execution_log,
@@ -75,7 +50,7 @@ from messaging.registry.processes.context import _ProcessContext
 
 
 def read_reference(doctype, name):
-    """Read a public lightweight reference under the active native document guards."""
+    """Explicit document read with native permission and field checks."""
     doc = frappe.get_doc(doctype, name)
     doc.check_permission('read')
     doc.apply_fieldlevel_read_permissions()
@@ -504,10 +479,8 @@ def run_handler(definition, context, execution):
 		def invoke(function, request):
 			if not is_system_manager():
 				require_automation_process(definition.method)
-			with suspend():
-				with controlled_reads(applications=(definition.application, *spec['dependencies'], 'frappe')):
-					with effect_boundary(dict(execution, path=definition.method)):
-						return function(request)
+			with suspend(), effect_boundary(dict(execution, path=definition.method)):
+				return function(request)
 
 		# Construct execution values using the public validators and the registered
 		# declaration. Owner declaration functions never run on ordinary messages.

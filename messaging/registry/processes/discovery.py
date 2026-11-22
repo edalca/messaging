@@ -17,7 +17,7 @@ from messaging.communication.doctype.process_definition.process_definition impor
     _discovery_deadline as execution_deadline,
     _registry_write,
     _testing,
-    controlled_reads,
+    discovery_reads,
     process_messages,
     read_boundary,
     resolve_definition,
@@ -169,7 +169,7 @@ def _discover_contract(definition, *, language=None):
     get_all_translations(frappe.local.lang)
     token = _testing.set(True)
     try:
-        with process_messages(), execution_deadline(), controlled_reads([]), read_boundary():
+        with process_messages(), execution_deadline(), discovery_reads(), read_boundary():
             context.declare(handler)
             result = context.response()
         validate_process_schema_v1(result)
@@ -204,7 +204,7 @@ def _discovery_worker():
 
 
 def declaration(definition):
-    """Discover the contract; native permissions authorize business document access."""
+    """Discover the contract and verify the installed owner dependencies."""
     contract, callback = discover_contract(definition)
     required = getattr(frappe.get_module(definition.application + '.hooks'), 'required_apps', [])
     dependencies = sorted(set(required) - {'messaging', definition.application})

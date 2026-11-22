@@ -32,8 +32,8 @@ def register_processes(*, app, processes):
 
 
 def decimal_rows(doctype, names, fields):
-    """Read exact decimals through Process Definition's authorized document access."""
-    from messaging.communication.doctype.process_definition.execution import decimal_rows as read
+    """Read exact decimals for the records selected by the caller."""
+    from messaging.communication.doctype.process_definition.process_definition import decimal_rows as read
     return read(doctype, names, fields)
 
 
