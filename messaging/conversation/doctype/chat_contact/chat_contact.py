@@ -178,27 +178,9 @@ def remember_language(contact, language, confidence):
 def process_profile_value(name, key):
     """Read one profile value of the active Process contact without granting catalogue access."""
     from messaging.communication.doctype.process_definition.process_definition import (
-        _effect,
-        _native,
-        _scope,
+        process_profile_value as read_process_profile_value,
     )
-    from messaging.common.primitives import _freeze
-    execution = _effect.get()
-    if not execution or not execution.get('session') or type(key) is not str:
-        raise frappe.PermissionError(_('An authorized operational execution is required.'))
-    token = _scope.set({**(_scope.get() or {}), 'Chat Session': None, 'Chat Contact': None})
-    try:
-        with _native():
-            if frappe.db.get_value('Chat Session', execution['session'], 'contact') != name:
-                raise frappe.PermissionError(_('The contact does not belong to the Process session.'))
-            doc = frappe.get_doc('Chat Contact', name)
-            doc.check_permission('read')
-            doc.apply_fieldlevel_read_permissions()
-            if not doc.has_permlevel_access_to('parameter_values'):
-                raise frappe.PermissionError(_('Contact profile read permission is required.'))
-            return _freeze(frappe.parse_json(doc.parameter_values or '{}').get(key))
-    finally:
-        _scope.reset(token)
+    return read_process_profile_value(name, key)
 
 
 def schedule_contact(contact):

@@ -262,7 +262,6 @@ class TestBotParameter(FrappeTestCase):
 		self.assertFalse(validate_parameter_value(p_fmt, "0801-1995-0012A")[0])
 
 	def test_protection_of_parameter_referenced_by_flow(self) -> None:
-		from messaging.communication.doctype.process_definition import validation as testing
 		from messaging.registry.processes import BotProcess
 		from messaging.registry.processes import register_processes
 
@@ -438,7 +437,7 @@ from unittest.mock import patch
 
 from messaging.registry.processes import BotProcess, BotRequest, BotResponse
 from messaging.registry.processes import register_processes
-from messaging.communication.doctype.process_definition import validation as testing
+from messaging.communication.doctype.process_definition import approval, revisions
 from messaging.communication.doctype.process_definition.test_process_definition import ProcessFixtures
 from messaging.chatbot.doctype.bot_flow.bot_flow import BotFlow
 from messaging.chatbot.doctype.bot_parameter.bot_parameter import (
@@ -499,7 +498,7 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		flow = frappe.new_doc("Bot Flow")
 		flow.update(dict(
 			workflow_code=code, workflow_name=code, semantic_description="Shared parameter consumer",
-			priority=self.take_priority() if priority is None else priority, status='Disabled',
+			priority=self.take_priority() if priority is None else priority, status='Untested',
 			process_definition=self.definition_id(inputs=[dict(name=argument or parameter.name,
 			type={'Int': 'integer', 'Date': 'date'}.get(parameter.parameter_type, 'string'), multiple=bool(multiple), required=bool(required))]
 			+ [dict(name=row.get('process_argument') or row['parameter'],
@@ -522,9 +521,10 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 			input_continuation_message=flow.input_continuation_message))
 		result = self.approve(flow)
 		self.assertEqual(result['status'], 'Passed', result)
-		if enabled:
-			self.activate(flow)
-		self.assertEqual(testing.test_state(flow), 'Passed')
+		if not enabled:
+			self.activate(flow, False)
+		self.assertEqual(flow.status, 'Enabled' if enabled else 'Disabled')
+		self.assertTrue(approval.is_current(flow))
 		return flow
 
 	def approval_sample(self, parameter):
@@ -562,7 +562,9 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		parameter.reload()
 		self.assertEqual(parameter.min_length, 2)
 		self.assertEqual(parameter.request_phrases[0].request_phrase, 'Updated reusable question.')
-		self.assertEqual(testing.test_state(frappe.get_doc('Bot Flow', flow.name)), 'Untested')
+		flow.reload()
+		self.assertEqual(flow.status, 'Unavailable')
+		self.assertFalse(approval.is_current(flow))
 
 	def test_unreferenced_parameter_saves_without_confirmation(self):
 		parameter = self.parameter("plain")
@@ -595,18 +597,17 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		other = frappe.new_doc("Bot Flow")
 		other.update(dict(
 			workflow_code=self.prefix + "_bare", workflow_name="Bare", semantic_description="Untouched",
-			priority=0, status='Disabled', process_definition=self.definition_id(inputs=[]),
+			priority=0, status='Untested', process_definition=self.definition_id(inputs=[]),
 			outputs=[dict(status_code="success", output_mode="Message")],
 		))
 		from messaging.chatbot.doctype.bot_settings.bot_settings import resolve_process_language
 		other.append('translations', dict(language=resolve_process_language(), menu_label='Bare option', semantic_description=other.semantic_description))
 		self.assertEqual(self.approve(other)['status'], 'Passed')
-		self.activate(other)
 		relation = self.relation(affected, parameter.name)
 		definition = affected.process_definition
-		fingerprint = testing.fingerprint(affected)
-		other_fingerprint = testing.fingerprint(other)
-		revision = testing.runtime_revision()
+		fingerprint = approval.contract_hash(affected)
+		other_fingerprint = approval.contract_hash(other)
+		revision = revisions.runtime_revision()
 		preview = preview_referenced_update(parameter.name, {"expression": "SC-#####\n#####"})
 		result = apply_referenced_update(parameter.name, {"expression": "SC-#####\n#####"}, preview["dependency_token"])
 		self.assertTrue(result["applied"])
@@ -617,13 +618,14 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		self.assertEqual(frappe.db.get_value("Bot Parameter", parameter.name, "expression"), "SC-#####\n#####")
 		affected.reload()
 		other.reload()
-		self.assertEqual(testing.test_state(affected), "Untested")
-		self.assertEqual(affected.process_test_status, "Passed")
-		self.assertEqual(affected.process_test_fingerprint, fingerprint)
-		self.assertNotEqual(testing.fingerprint(affected), fingerprint)
-		self.assertEqual(testing.test_state(other), "Passed")
-		self.assertEqual(testing.fingerprint(other), other_fingerprint)
-		self.assertEqual(testing.runtime_revision(), revision)
+		self.assertEqual(affected.status, "Unavailable")
+		self.assertFalse(approval.is_current(affected))
+		self.assertEqual(affected.approved_contract_hash, fingerprint)
+		self.assertNotEqual(approval.contract_hash(affected), fingerprint)
+		self.assertEqual(other.status, "Enabled")
+		self.assertTrue(approval.is_current(other))
+		self.assertEqual(approval.contract_hash(other), other_fingerprint)
+		self.assertEqual(revisions.runtime_revision(), revision)
 		self.assertEqual(affected.process_definition, definition)
 		self.assertEqual(self.relation(affected, parameter.name).expression, relation.expression)
 		self.assertEqual(self.relation(affected, parameter.name).process_argument, "contracts")
@@ -638,14 +640,14 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 	def test_non_contract_change_does_not_invalidate_or_require_confirmation(self):
 		parameter = self.parameter("text")
 		flow = self.add_flow(parameter, enabled=1)
-		fingerprint = testing.fingerprint(flow)
+		fingerprint = approval.contract_hash(flow)
 		preview = preview_referenced_update(parameter.name, {"allow_ai_extraction": 1})
 		self.assertFalse(preview["confirmation_required"])
 		result = apply_referenced_update(parameter.name, {"allow_ai_extraction": 1})
 		self.assertTrue(result["applied"])
 		flow.reload()
-		self.assertEqual(testing.test_state(flow), "Untested")
-		self.assertNotEqual(testing.fingerprint(flow), fingerprint)
+		self.assertFalse(approval.is_current(flow))
+		self.assertNotEqual(approval.contract_hash(flow), fingerprint)
 		self.assertEqual(int(frappe.db.get_value("Bot Parameter", parameter.name, "allow_ai_extraction")), 1)
 
 	def test_label_change_is_confirmed_and_invalidates_the_fingerprint(self):
@@ -658,7 +660,9 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		self.assertTrue(result["applied"])
 		self.assertEqual(result["validated"], [flow.name])
 		self.assertEqual(result["needs_correction"], [])
-		self.assertEqual(testing.test_state(flow), "Passed")
+		flow.reload()
+		self.assertEqual(flow.status, "Enabled")
+		self.assertTrue(approval.is_current(flow))
 		self.assertEqual(frappe.db.get_value("Bot Parameter", parameter.name, "label"), "Public label")
 
 	def test_direct_save_and_missing_confirmation_are_rejected(self):
@@ -695,7 +699,8 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "confirm it again"):
 			apply_referenced_update(parameter.name, {"expression": "#####"}, preview["dependency_token"])
 		self.assertEqual(frappe.db.get_value("Bot Parameter", parameter.name, "expression"), "SC-#####")
-		self.assertEqual(testing.test_state(flow), "Passed")
+		flow.reload()
+		self.assertTrue(approval.is_current(flow))
 
 	def test_repeating_an_applied_update_does_not_write_again(self):
 		parameter = self.parameter("repeat", parameter_type="Expression", expression="SC-#####")
@@ -708,7 +713,9 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		self.assertTrue(second["unchanged"])
 		self.assertEqual(str(frappe.db.get_value("Bot Parameter", parameter.name, "modified")), modified)
 		self.assertEqual(frappe.db.get_value("Bot Parameter", parameter.name, "expression"), "#####")
-		self.assertEqual(testing.test_state(flow), "Untested")
+		flow.reload()
+		self.assertEqual(flow.status, "Unavailable")
+		self.assertFalse(approval.is_current(flow))
 
 	def test_transactional_failure_rolls_back_the_parameter(self):
 		parameter = self.parameter("atomic", parameter_type="Expression", expression="SC-#####")
@@ -728,7 +735,9 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		result = apply_referenced_update(second.name, {"expression": "#####"}, preview["dependency_token"])
 		self.assertTrue(result["applied"])
 		self.assertEqual(frappe.db.get_value("Bot Parameter", second.name, "expression"), "#####")
-		self.assertEqual(testing.test_state(frappe.get_doc('Bot Flow', flow.name)), "Untested")
+		flow.reload()
+		self.assertEqual(flow.status, "Unavailable")
+		self.assertFalse(approval.is_current(flow))
 
 	def test_disabling_a_referenced_parameter_rolls_back(self):
 		parameter = self.parameter("active", parameter_type="Expression", expression="#####")
@@ -738,45 +747,49 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		self.assertFalse(result["applied"])
 		self.assertEqual(int(frappe.db.get_value("Bot Parameter", parameter.name, "enabled")), 1)
 		self.assertTrue(frappe.db.exists("Flow Parameter", {"parent": flow.name, "parameter": parameter.name}))
-		self.assertEqual(testing.test_state(flow), "Passed")
+		flow.reload()
+		self.assertTrue(approval.is_current(flow))
 
 	def test_missing_evidence_is_not_replaced_with_a_passed_approval(self):
 		parameter = self.parameter("pending", parameter_type="Expression", expression="SC-#####")
 		flow = self.add_flow(parameter, enabled=1, multiple=1, minimum=1, maximum=3)
-		stored = flow.process_test_fingerprint
+		stored_contract = flow.approved_contract_hash
+		stored_approval = flow.approval_hash
+		stored_log = flow.process_test_log
 		preview = preview_referenced_update(parameter.name, {"expression": "#####"})
-		apply_referenced_update(parameter.name, {"expression": "#####"}, preview["dependency_token"])
-		promoted = {"promoted": testing.test_state(frappe.get_doc("Bot Flow", flow.name)) == "Passed", "approval": testing.test_state(frappe.get_doc("Bot Flow", flow.name))}
-		self.assertFalse(promoted["promoted"])
-		self.assertEqual(promoted["approval"], "Untested")
+		result = apply_referenced_update(parameter.name, {"expression": "#####"}, preview["dependency_token"])
+		self.assertTrue(result["applied"])
+		self.assertEqual(result["consumers"][0]["approval"], "Untested")
+		self.assertEqual(result["consumers"][0]["evidence"], "pending")
 		flow.reload()
-		self.assertEqual(testing.test_state(flow), "Untested")
-		self.assertEqual(flow.process_test_fingerprint, stored)
-		self.assertEqual(flow.process_test_status, "Passed")
-		self.assertNotEqual(testing.fingerprint(flow), stored)
+		self.assertEqual(flow.status, "Unavailable")
+		self.assertFalse(approval.is_current(flow))
+		self.assertEqual(flow.approved_contract_hash, stored_contract)
+		self.assertEqual(flow.approval_hash, stored_approval)
+		self.assertEqual(flow.process_test_log, stored_log)
+		self.assertNotEqual(approval.contract_hash(flow), stored_contract)
 
 	def test_real_output_evidence_can_be_promoted_from_the_parameter_operation(self):
 		parameter = self.parameter("renewed", parameter_type="Expression", expression="SC-#####")
 		flow = self.add_flow(parameter, enabled=1, multiple=1, minimum=1, maximum=3, argument="contracts")
 		preview = preview_referenced_update(parameter.name, {"expression": "SC-#####\n#####"})
-		apply_referenced_update(parameter.name, {"expression": "SC-#####\n#####"}, preview["dependency_token"])
-		self.assertEqual(testing.test_state(flow), "Untested")
-		described = testing.describe(frappe.get_doc("Bot Flow", flow.name).as_dict())
-		self.assertFalse(described["configuration_error"])
-		self.assertEqual(described["outputs"][0]["status"], "Untested")
+		applied = apply_referenced_update(parameter.name, {"expression": "SC-#####\n#####"}, preview["dependency_token"])
+		self.assertTrue(applied["applied"])
+		self.assertEqual(applied["consumers"][0]["structural"], "valid")
+		self.assertEqual(applied["consumers"][0]["outputs"][0]["status"], "Untested")
+		flow.reload()
+		self.assertEqual(flow.status, "Unavailable")
+		self.assertFalse(approval.is_current(flow))
 		tested = self.approve(flow)
 		self.assertEqual(tested["status"], "Passed", tested)
-		promoted = {"promoted": testing.test_state(frappe.get_doc("Bot Flow", flow.name)) == "Passed", "approval": testing.test_state(frappe.get_doc("Bot Flow", flow.name))}
-		self.assertTrue(promoted["promoted"])
-		self.assertEqual(promoted["approval"], "Passed")
 		flow.reload()
-		self.assertEqual(testing.test_state(flow), "Passed")
-		self.assertEqual(flow.process_test_fingerprint, testing.fingerprint(flow))
+		self.assertEqual(flow.status, "Enabled")
+		self.assertTrue(approval.is_current(flow))
+		self.assertEqual(flow.approved_contract_hash, approval.contract_hash(flow))
 		parameter.reload()
 		self.assertEqual(parameter.expression, "SC-#####\n#####")
 		self.assertEqual(flow.process_definition, self.definition_id())
-		again = {"promoted": testing.test_state(flow) == "Passed", "unchanged": True}
-		self.assertTrue(again["unchanged"])
+		self.assertEqual(self.approve(flow)["status"], "Passed")
 
 	def test_guest_and_parameter_only_writer_are_rejected(self):
 		parameter = self.parameter("secret", parameter_type="Expression", expression="SC-#####")
@@ -814,7 +827,9 @@ class TestReferencedParameterUpdate(ProcessFixtures, unittest.TestCase):
 		self.assertTrue(result["applied"])
 		self.assertEqual(result["validated"], [])
 		self.assertEqual(result["needs_correction"], [flow.name])
-		self.assertEqual(testing.test_state(flow), "Untested")
+		flow.reload()
+		self.assertEqual(flow.status, "Unavailable")
+		self.assertFalse(approval.is_current(flow))
 		self.assertEqual(int(frappe.db.get_value("Bot Parameter", parameter.name, "allow_contextual_name_extraction")), 0)
 
 

@@ -214,11 +214,18 @@ owns `execute_process`. It reloads the persisted consumer, resolves the
 available definition of the correct type, checks invocation authorization,
 approval, deployed sources, signature and context, then invokes the verified
 handler. Arbitrary client-provided Python paths are outside this contract. The
-runtime enforces a 30-second signal-based deadline, a savepoint, and redacted
-evidence in Process Execution Log. Writes require an exact operational proof and
-use native document persistence inside the executor's transaction. Direct SQL,
-hidden commits, and external side effects are outside the callback contract.
-Static inspection also rejects UI output from Process code.
+runtime enforces a 30-second thread-isolated deadline (Python bytecode
+monitoring, MariaDB per-session statement and lock timeouts, and bounded
+`time.sleep` without process-global `SIGALRM` mutation, compatible with `sync`,
+`gthread`, and RQ workers), a savepoint, and redacted evidence in Process
+Execution Log. Writes require an exact operational proof and use native
+document persistence inside the executor's transaction. Direct SQL, hidden
+commits, and external side effects are outside the callback contract. Static
+inspection also rejects UI output from Process code. Opaque native C extensions
+that neither execute Python bytecode, query MariaDB, nor call `time.sleep`
+cannot be forcibly interrupted in-thread; external I/O remains blocked inside
+Process handlers and bounded by subprocesses where permitted (discovery and
+external AI REST transport).
 
 The handler owns business document selection, operations, validation, and
 response data. Messaging adds no business document or field permission checks
@@ -701,3 +708,142 @@ execution. Inspect the exact contact and source references.
   cover Frappe permissions, document hooks, and transaction boundaries where
   applicable. Use fictional contacts and EMULR to exercise the Messaging
   transport boundary without contacting an external provider.
+
+## Verificación estática obligatoria del código Python
+
+### Obligación general
+
+Todo agente que modifique código Python de Messaging debe ejecutar las
+verificaciones estáticas descritas en esta sección antes de declarar completada
+su tarea. Esta validación forma parte obligatoria de la definición de trabajo
+terminado, independientemente del modelo de IA utilizado, y no constituye una
+recomendación opcional.
+
+Las versiones fijadas para reproducibilidad se mantienen en el grupo
+`static-checks` de [pyproject.toml](pyproject.toml) (`ruff==0.17.6` y
+`pyright==1.1.414`) y en la configuración versionada
+[pyrightconfig.json](pyrightconfig.json), sin incorporarse como dependencias
+del runtime productivo.
+
+### Ruff obligatorio
+
+Ejecutar desde la raíz del repositorio:
+
+```bash
+uvx ruff==0.17.6 check messaging --select F821,F822,F823
+```
+
+El análisis cubre tanto el código productivo como todas las pruebas
+automatizadas (`F821` nombres indefinidos, `F822` símbolos indefinidos en
+`__all__`, `F823` variables locales referenciadas antes de su asignación). No
+excluir archivos de prueba para conseguir una aprobación artificial. El
+resultado esperado es `All checks passed!`.
+
+### Pyright obligatorio
+
+Ejecutar desde la raíz del repositorio dentro del entorno Bench con Python 3.14
+y Frappe v16 disponibles (resueltos mediante [pyrightconfig.json](pyrightconfig.json)):
+
+```bash
+uvx --from pyright==1.1.414 pyright messaging
+```
+
+Cuando el entorno Bench se encuentra en otra ruta o fuera del árbol estándar
+`<bench>/apps/messaging`, indicar explícitamente `--pythonpath <ruta-python-bench>`.
+
+La configuración utiliza modo `basic` sobre Python 3.14 y mantiene habilitados
+los diagnósticos de variables indefinidas (`reportUndefinedVariable`),
+importaciones inexistentes (`reportMissingImports`), símbolos desconocidos o
+atributos inexistentes determinables estáticamente (`reportAttributeAccessIssue`),
+errores generales de tipos (`reportGeneralTypeIssues`) y variables no enlazadas
+(`reportUnboundVariable`). Revisar especialmente las referencias entre módulos
+y las importaciones privadas que puedan quedar obsoletas tras reorganizaciones
+arquitectónicas.
+
+### Compilación obligatoria
+
+Ejecutar con el intérprete Python 3.14 del entorno de desarrollo (Bench):
+
+```bash
+python -m compileall -q messaging
+```
+
+Esta comprobación verifica ausencia de errores de sintaxis en todo el paquete;
+no sustituye a Ruff, Pyright ni a las pruebas funcionales.
+
+### Corrección antes de finalizar
+
+Si cualquiera de las comprobaciones detecta errores:
+
+1. Identificar el origen exacto del diagnóstico.
+2. Determinar si corresponde a un defecto real o a una limitación legítima del
+   análisis estático frente a mecanismos dinámicos de Frappe.
+3. Corregir los defectos reales introducidos o directamente afectados por la
+   intervención (nombres indefinidos, importaciones inexistentes, referencias
+   rotas entre módulos, contratos o llamadas incompatibles y mocks hacia
+   símbolos inexistentes).
+4. Repetir las verificaciones estáticas aplicables.
+5. Ejecutar las pruebas funcionales focalizadas correspondientes según el
+   impacto.
+
+Ruff (`F821,F822,F823`) y `compileall` deben finalizar sin errores. En Pyright,
+los diagnósticos legítimos derivados del tipado dinámico de Frappe (como campos
+dinámicos de DocTypes, atributos construidos en tiempo de ejecución o retornos
+dinámicos de `frappe.db.get_value`) no bloquean automáticamente la finalización
+y deben distinguirse transparentemente en el informe en lugar de perseguirse
+artificialmente con cero diagnósticos globales. No declarar aprobada ninguna
+comprobación que mantenga defectos reales sin corregir.
+
+### Prohibición de ocultar errores
+
+Está prohibido ocultar defectos reales mediante:
+
+- `# noqa` para silenciar problemas confirmados.
+- `# type: ignore` sin justificación técnica explícita.
+- Exclusiones generales injustificadas en la configuración.
+- Desactivación global de diagnósticos relevantes.
+- Imports ficticios o variables artificiales creadas solo para silenciar
+  herramientas.
+
+Cualquier excepción legítima motivada por comportamiento dinámico de Frappe
+debe justificarse técnicamente y limitarse estrictamente al caso necesario.
+
+### Tratamiento de errores preexistentes
+
+No introducir errores nuevos. Si durante la auditoría se detectan diagnósticos
+preexistentes:
+
+- Corregir los que pertenezcan al alcance de la tarea o impidan validar las
+  modificaciones actuales.
+- Documentar por separado los problemas preexistentes no relacionados, sin
+  ocultarlos ni presentar una aprobación inexistente.
+- Evitar refactorizaciones generales fuera del alcance solicitado.
+
+### Revalidación tras modificaciones
+
+Si después de una verificación se vuelve a editar código Python —incluidos
+archivos de prueba o ajustes finales—, repetir las verificaciones estáticas
+aplicables y las pruebas afectadas. La aprobación final debe corresponder al
+estado exacto del árbol de trabajo entregado.
+
+### Evidencia en los informes
+
+Todo informe de implementación que incluya cambios en código Python debe
+registrar:
+
+- Herramientas utilizadas y versiones exactas de Ruff y Pyright.
+- Comandos ejecutados.
+- Cantidad y naturaleza de los errores detectados inicialmente.
+- Correcciones realizadas.
+- Resultados finales verificados sobre el árbol entregado.
+- Comprobaciones omitidas y su justificación técnica, si existieran.
+
+No inventar resultados ni reutilizar comprobaciones históricas como evidencia
+del estado actual.
+
+### Alcance permanente
+
+Esta política rige permanentemente para todos los trabajos futuros de
+desarrollo Python en Messaging y se mantiene versionada en `AGENTS.md`. No
+duplicar ni contradecir estas reglas en archivos locales ni modificar
+`AGENTS.local.md` por motivo de esta política.

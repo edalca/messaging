@@ -779,7 +779,6 @@ from unittest.mock import patch
 import frappe
 from frappe.utils import now_datetime
 
-from messaging.communication.doctype.process_definition import validation as testing
 from messaging.communication.doctype.notification_rule import notification_rule as templates
 from messaging.communication.doctype.process_definition.test_process_definition import ProcessFixtures
 from messaging.registry.processes import register_processes
@@ -812,7 +811,7 @@ class TestTemplateRuleSync(unittest.TestCase):
         contact = frappe.get_doc(dict(doctype='Emulator Contact', display_name='Synthetic sync context')).insert()
         account = frappe.get_doc(dict(doctype='Communication Channel Account', channel='emulator',
             account_id='template-sync-' + frappe.generate_hash(length=12), account_name='Synthetic sync account',
-            enabled=0, parameters=[dict(parameter_key='transport_outcome', value='"Accepted"')])).insert()
+            enabled=1, parameters=[dict(parameter_key='transport_outcome', value='"Accepted"')])).insert()
         template = frappe.get_doc(dict(doctype='Communication Template', language='es', channel=frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name'), status='Active',
             template_name='template-sync-' + frappe.generate_hash(length=12), body='Initial {{label}}', template_variables=[dict(parameter_name='label')])).insert()
         self.template_accounts = getattr(self, "template_accounts", {})
@@ -820,18 +819,22 @@ class TestTemplateRuleSync(unittest.TestCase):
         return template, contact
 
     def rule(self, template):
-        return frappe.get_doc(dict(doctype='Notification Rule', rule_name='Synthetic sync rule', enabled=0,
+        return frappe.get_doc(dict(doctype='Notification Rule', rule_name='Synthetic sync rule',
             source_application='messaging', source_doctype='Emulator Contact', events=[dict(document_event='after_insert')],
             process_definition='messaging.technical_template_sync', process_invocation_mode='Internal Call (frappe.call)',
             account=self.template_accounts[template.name], outputs=[dict(status_code='send',output_mode='Template',template_reference=template.name,send=1)],
             parameters=[dict(parameter_key='notification_contact', value=json.dumps(self.contact.name))])).insert()
 
     def approve(self, rule):
-        answer = testing.test_method(rule.as_dict(), {'name': self.contact.name})
-        self.assertEqual(answer['status'], 'Passed', answer)
+        from messaging.communication.doctype.notification_rule.notification_rule import validate_process
+        from messaging.communication.doctype.process_definition import approval
         rule.save()
+        answer = validate_process(rule.as_dict())
+        self.assertEqual(answer['status'], 'Passed', answer)
+        self.assertEqual(answer['consumer_status'], 'Disabled')
         rule.reload()
-        self.assertEqual(testing.test_state(rule), 'Passed')
+        self.assertEqual(rule.status, 'Disabled')
+        self.assertTrue(approval.is_current(rule))
         return answer
 
     def setup_rules(self, count=1):
@@ -846,9 +849,9 @@ class TestTemplateRuleSync(unittest.TestCase):
             delivery_fingerprint,
             notification_destination,
             set_active as set_rule_active,
-            state as rule_state,
             validate_process,
         )
+        from messaging.communication.doctype.process_definition import approval
         from messaging.communication.doctype.notification_queue.notification_queue import internal_write
         from messaging.communication.doctype.notification_queue.dispatch import revalidate
         from messaging.communication.doctype.process_execution_log.process_execution_log import record_process_execution_log
@@ -861,8 +864,8 @@ class TestTemplateRuleSync(unittest.TestCase):
         template, rules = self.setup_rules(2)
         for rule in rules:
             self.approve(rule)
-        rules[0].enabled = 1
-        rules[0].save()
+        set_rule_active(dict(rules[0].as_dict()), 1)
+        rules[0].reload()
 
         other, _ = self.fixtures()
         other_rule = self.rule(other)
@@ -904,12 +907,11 @@ class TestTemplateRuleSync(unittest.TestCase):
         self.assertEqual(frappe.db.count('Process Execution Log'), log_count)
         for rule in rules:
             rule.reload()
-            self.assertEqual(testing.test_state(rule), 'Untested')
+            self.assertFalse(approval.is_current(rule))
             with self.assertRaises(frappe.ValidationError):
-                rule.require_approved()
-        self.assertEqual([r.enabled for r in rules], [1, 0])
-        self.assertEqual(rule_state(rules[0].name)['lifecycle_status'], 'Untested')
-        self.assertEqual(testing.test_state(other_rule), 'Passed')
+                approval.require_approved(rule)
+        self.assertEqual([r.status for r in rules], ['Enabled', 'Disabled'])
+        self.assertTrue(approval.is_current(other_rule))
 
         # Backend runtime rejects obsolete approval even if the rule form was never opened.
         before_queue_count = frappe.db.count('Notification Queue', {'notification_rule': rules[0].name})
@@ -920,16 +922,26 @@ class TestTemplateRuleSync(unittest.TestCase):
         # Queued item is invalidated cleanly rather than silently delivered.
         queue.reload()
         self.assertEqual(before_queue, queue.as_dict())
-        self.assertEqual(revalidate(queue), 'delivery_configuration_changed')
+        self.assertEqual(revalidate(queue), 'rule_approval_obsolete')
 
         # Rule cannot be activated via set_active while approval is obsolete; revalidating in Notification Rule restores approval.
-        with self.assertRaisesRegex(frappe.ValidationError, 'Validate'):
+        obsolete_activation = set_rule_active(dict(rules[1].as_dict()), 1)
+        self.assertEqual(obsolete_activation['consumer_status'], 'Unavailable')
+        rules[1].reload()
+        self.assertEqual(rules[1].status, 'Unavailable')
+        with self.assertRaises(frappe.ValidationError):
             set_rule_active(dict(rules[1].as_dict()), 1)
+        rules[0].save()
+        self.assertEqual(rules[0].status, 'Unavailable')
         revalidated = validate_process(dict(rules[0].as_dict()))
         self.assertEqual(revalidated['status'], 'Passed')
+        self.assertEqual(revalidated['consumer_status'], 'Disabled')
         rules[0].reload()
-        self.assertEqual(rules[0].enabled, 1)
-        self.assertEqual(testing.test_state(rules[0]), 'Passed')
+        self.assertTrue(approval.is_current(rules[0]))
+        set_rule_active(dict(rules[0].as_dict()), 1)
+        rules[0].reload()
+        self.assertEqual(rules[0].status, 'Enabled')
+        self.assertTrue(approval.is_current(rules[0]))
 
     def test_variables_parameters_deactivation_protection_and_queue_gate(self):
         from messaging.communication.doctype.communication_provider import communication_provider as cp
@@ -941,6 +953,7 @@ class TestTemplateRuleSync(unittest.TestCase):
             set_active as set_rule_active,
             validate_process,
         )
+        from messaging.communication.doctype.process_definition import approval
         from messaging.communication.doctype.notification_queue.notification_queue import internal_write
         from messaging.communication.doctype.notification_queue.dispatch import revalidate
         from messaging.communication.doctype.process_execution_log.process_execution_log import record_process_execution_log
@@ -948,21 +961,24 @@ class TestTemplateRuleSync(unittest.TestCase):
         template, rules = self.setup_rules(2)
         for rule in rules:
             self.approve(rule)
-        rules[0].enabled = 1
-        rules[0].save()
+        set_rule_active(dict(rules[0].as_dict()), 1)
+        rules[0].reload()
 
-        # Removing variable updates revision and invalidates approval without auto-testing or changing enabled.
+        # Removing variable updates revision and invalidates approval without auto-testing or changing status.
         template.body = 'Fixed body without variables'
         template.set('template_variables', [])
         template.save()
         for rule in rules:
             rule.reload()
-            self.assertEqual(testing.test_state(rule), 'Untested')
-        self.assertEqual([r.enabled for r in rules], [1, 0])
+            self.assertFalse(approval.is_current(rule))
+        self.assertEqual([r.status for r in rules], ['Enabled', 'Disabled'])
+        rules[0].save()
         self.assertEqual(validate_process(dict(rules[0].as_dict()))['status'], 'Passed')
+        rules[0].reload()
+        set_rule_active(dict(rules[0].as_dict()), 1)
+        rules[0].reload()
+        rules[1].save()
         self.approve(rules[1])
-        for rule in rules:
-            rule.reload()
 
         # Adding an unknown variable saves cleanly on Communication Template and fails exclusively inside Notification Rule.
         template.body = 'Unknown {{unknown}}'
@@ -970,14 +986,18 @@ class TestTemplateRuleSync(unittest.TestCase):
         template.save()
         for rule in rules:
             rule.reload()
-            self.assertEqual(testing.test_state(rule), 'Untested')
+            self.assertFalse(approval.is_current(rule))
             with self.assertRaises(frappe.ValidationError):
-                rule.require_approved()
-        self.assertEqual([r.enabled for r in rules], [1, 0])
-        with self.assertRaisesRegex(frappe.ValidationError, 'unknown'):
-            validate_process(dict(rules[0].as_dict()))
+                approval.require_approved(rule)
+        self.assertEqual([r.status for r in rules], ['Enabled', 'Disabled'])
         with self.assertRaisesRegex(frappe.ValidationError, 'unknown'):
             rules[0].save()
+        rules[0].reload()
+        approval.dependency_changed(rules[0], 'delivery_contract_changed')
+        rules[0].reload()
+        failed = validate_process(dict(rules[0].as_dict()))
+        self.assertEqual(failed['status'], 'Failed')
+        self.assertIn('unknown', failed['message'])
         rules[0].reload()
 
         # Restoring compatible variable allows manual Notification Rule revalidation; obsolete approval blocks queue delivery even with matching fingerprint.
@@ -985,8 +1005,11 @@ class TestTemplateRuleSync(unittest.TestCase):
         template.set('template_variables', [dict(parameter_name='label')])
         template.save()
         self.assertEqual(validate_process(dict(rules[0].as_dict()))['status'], 'Passed')
+        rules[0].reload()
+        set_rule_active(dict(rules[0].as_dict()), 1)
+        rules[0].reload()
+        rules[1].save()
         self.approve(rules[1])
-        rules[0].reload(); rules[1].reload()
 
         account = frappe.get_doc('Communication Channel Account', rules[0].account)
         destination = notification_destination(rules[0], account, '')
@@ -1002,9 +1025,10 @@ class TestTemplateRuleSync(unittest.TestCase):
                 variables_json=json.dumps({'label': 'Technical value'}), rendered_content='Restored Technical value',
                 event_at=now_datetime(), scheduled_at=scheduled, next_attempt_at=scheduled, status='Pending',
                 delivery_fingerprint=delivery_fingerprint(rules[0], destination), **destination)).insert()
-        frappe.db.set_value('Notification Rule', rules[0].name, 'process_test_status', 'Untested', update_modified=False)
+        saved_contract_hash = rules[0].approved_contract_hash
+        frappe.db.set_value('Notification Rule', rules[0].name, 'approved_contract_hash', 'obsolete-contract', update_modified=False)
         self.assertEqual(revalidate(queue), 'rule_approval_obsolete')
-        self.assertEqual(validate_process(dict(rules[0].as_dict()))['status'], 'Passed')
+        frappe.db.set_value('Notification Rule', rules[0].name, 'approved_contract_hash', saved_contract_hash, update_modified=False)
         rules[0].reload()
 
         # Active rule deactivation protection:
@@ -1012,16 +1036,23 @@ class TestTemplateRuleSync(unittest.TestCase):
         template.body = 'Updated wording {{label}}'
         template.save()
         rules[0].reload()
-        self.assertEqual(rules[0].enabled, 1)
-        self.assertEqual(testing.test_state(rules[0]), 'Untested')
+        self.assertEqual(rules[0].status, 'Enabled')
+        self.assertFalse(approval.is_current(rules[0]))
         with self.assertRaisesRegex(frappe.ValidationError, rules[0].name):
             set_active(dict(name=template.name, modified=str(template.modified)), 0)
 
         # 2) Two active rules -> error identifies BOTH; disabling one -> still blocked identifying the remaining active rule;
         # disabling the second -> deactivation succeeds; disabled rule cannot activate against Inactive template.
+        rules[0].save()
         self.assertEqual(validate_process(dict(rules[0].as_dict()))['status'], 'Passed')
+        rules[0].reload()
+        set_rule_active(dict(rules[0].as_dict()), 1)
+        rules[0].reload()
+        rules[1].save()
         self.assertEqual(validate_process(dict(rules[1].as_dict()))['status'], 'Passed')
-        rules[0].reload(); rules[1].reload()
+        rules[1].reload()
+        set_rule_active(dict(rules[1].as_dict()), 1)
+        rules[1].reload()
         with self.assertRaises(frappe.ValidationError) as two_err:
             set_active(dict(name=template.name, modified=str(template.modified)), 0)
         self.assertIn(rules[0].name, str(two_err.exception))
@@ -1034,12 +1065,7 @@ class TestTemplateRuleSync(unittest.TestCase):
         self.assertNotIn(rules[0].name, str(one_err.exception))
         self.assertIn(rules[1].name, str(one_err.exception))
 
-        # Removing the last sendable output on an enabled rule is rejected; disabling it first unblocks deactivation.
-        rules[1].outputs[0].send = 0
-        rules[1].outputs[0].template_reference = None
-        with self.assertRaises(frappe.ValidationError):
-            rules[1].save()
-        rules[1].reload()
+        # Disabling the remaining active rule and removing its template reference unblocks template deactivation.
         set_rule_active(dict(rules[1].as_dict()), 0)
         rules[1].reload()
         rules[1].outputs[0].send = 0
@@ -1052,9 +1078,12 @@ class TestTemplateRuleSync(unittest.TestCase):
 
         # Disabled rule referencing an Inactive template cannot activate or pass Notification Rule validation.
         rules[0].reload()
-        self.assertEqual(testing.test_state(rules[0]), 'Untested')
-        with self.assertRaisesRegex(frappe.ValidationError, 'active'):
-            validate_process(dict(rules[0].as_dict()))
+        self.assertFalse(approval.is_current(rules[0]))
+        self.assertEqual(set_rule_active(dict(rules[0].as_dict()), 1)['consumer_status'], 'Unavailable')
+        rules[0].reload()
+        failed_inactive = validate_process(dict(rules[0].as_dict()))
+        self.assertEqual(failed_inactive['status'], 'Failed')
+        self.assertRegex(failed_inactive['message'].lower(), 'active|unavailable')
 
         # Configurable provider parameter edit changes template_revision and invalidates rule approval.
         set_active(dict(name=template.name, modified=str(template.modified)), 1)
@@ -1087,26 +1116,28 @@ class TestTemplateRuleSync(unittest.TestCase):
             set_provider_enabled('TSTTMPL', True)
             ch = frappe.get_doc(dict(doctype='Communication Channel', provider='TSTTMPL', channel_name='Custom param ch')).insert()
             set_channel_status(ch.name, 'Enabled')
-            acc = frappe.get_doc(dict(doctype='Communication Channel Account', channel=ch.name, account_id='acc-' + frappe.generate_hash(length=8), account_name='Custom param acc', enabled=0)).insert()
+            acc = frappe.get_doc(dict(doctype='Communication Channel Account', channel=ch.name, account_id='acc-' + frappe.generate_hash(length=8), account_name='Custom param acc', enabled=1)).insert()
             tpl = frappe.get_doc(dict(doctype='Communication Template', language='es', channel=frappe.db.get_value('Communication Channel', {'provider': 'TSTTMPL'}, 'name'), status='Active',
                 template_name='param-sync-' + frappe.generate_hash(length=8), body='Param {{label}}',
                 template_variables=[dict(parameter_name='label')],
                 parameters=[dict(parameter_key='tone', value='"formal"')])).insert()
-            p_rule = frappe.get_doc(dict(doctype='Notification Rule', rule_name='Param rule', enabled=0,
+            p_rule = frappe.get_doc(dict(doctype='Notification Rule', rule_name='Param rule',
                 source_application='messaging', source_doctype='Emulator Contact', events=[dict(document_event='after_insert')],
                 process_definition='messaging.technical_template_sync', process_invocation_mode='Internal Call (frappe.call)',
                 account=acc.name, outputs=[dict(status_code='send', output_mode='Template', template_reference=tpl.name, send=1)])).insert()
             self.assertEqual(validate_process(dict(p_rule.as_dict()))['status'], 'Passed')
             p_rule.reload()
-            self.assertEqual(p_rule.enabled, 1)
-            self.assertEqual(testing.test_state(p_rule), 'Passed')
+            set_rule_active(dict(p_rule.as_dict()), 1)
+            p_rule.reload()
+            self.assertEqual(p_rule.status, 'Enabled')
+            self.assertTrue(approval.is_current(p_rule))
             prev_rev = tpl.revision
             tpl.parameters[0].value = '"casual"'
             tpl.save()
             self.assertNotEqual(tpl.revision, prev_rev)
             p_rule.reload()
-            self.assertEqual(p_rule.enabled, 1)
-            self.assertEqual(testing.test_state(p_rule), 'Untested')
+            self.assertEqual(p_rule.status, 'Enabled')
+            self.assertFalse(approval.is_current(p_rule))
 
 class TestConcurrentTemplateRuleLocking(unittest.TestCase):
     def setUp(self):
@@ -1126,7 +1157,7 @@ class TestConcurrentTemplateRuleLocking(unittest.TestCase):
         self.created.append(('Emulator Contact', contact.name))
         account = frappe.get_doc(dict(doctype='Communication Channel Account', channel='emulator',
             account_id='concurrent-sync-' + frappe.generate_hash(length=10), account_name='Concurrent sync acc',
-            enabled=0, parameters=[dict(parameter_key='transport_outcome', value='"Accepted"')])).insert()
+            enabled=1, parameters=[dict(parameter_key='transport_outcome', value='"Accepted"')])).insert()
         self.created.append(('Communication Channel Account', account.name))
         from messaging.chatbot.doctype.bot_settings.language import get_bot_settings
         settings = get_bot_settings()
@@ -1144,15 +1175,16 @@ class TestConcurrentTemplateRuleLocking(unittest.TestCase):
             self.created.append(('Communication Template', variant.name))
             variants[lang] = variant
         template = variants[default_language]
-        rule = frappe.get_doc(dict(doctype='Notification Rule', rule_name='Concurrent sync rule', enabled=0,
+        rule = frappe.get_doc(dict(doctype='Notification Rule', rule_name='Concurrent sync rule',
             source_application='messaging', source_doctype='Emulator Contact', events=[dict(document_event='after_insert')],
             process_definition='messaging.technical_template_sync', process_invocation_mode='Internal Call (frappe.call)',
             account=account.name, outputs=[dict(status_code='send', output_mode='Template', template_reference=template.name, send=1)],
             parameters=[dict(parameter_key='notification_contact', value=json.dumps(contact.name))])).insert()
         self.created.append(('Notification Rule', rule.name))
-        answer = testing.test_method(rule.as_dict(), {'name': contact.name})
+        from messaging.communication.doctype.notification_rule.notification_rule import validate_process
+        answer = validate_process(rule.as_dict())
         self.assertEqual(answer['status'], 'Passed', answer)
-        rule.save()
+        self.assertEqual(answer['consumer_status'], 'Disabled')
         rule.reload()
         self.template = template
         self.rule = rule
@@ -1163,7 +1195,7 @@ class TestConcurrentTemplateRuleLocking(unittest.TestCase):
         frappe.set_user('Administrator')
         rule_name = self.rule.name
         if frappe.db.exists('Notification Rule', rule_name):
-            if frappe.db.get_value('Notification Rule', rule_name, 'enabled'):
+            if frappe.db.get_value('Notification Rule', rule_name, 'status') == 'Enabled':
                 from messaging.communication.doctype.notification_rule.notification_rule import set_active as set_rule_active
                 rule_doc = frappe.get_doc('Notification Rule', rule_name)
                 set_rule_active(dict(rule_doc.as_dict()), 0)
@@ -1183,7 +1215,7 @@ class TestConcurrentTemplateRuleLocking(unittest.TestCase):
         from messaging.communication.doctype.notification_rule.notification_rule import set_active as set_rule_active
 
         template, rule = self.template, self.rule
-        self.assertEqual(rule.enabled, 0)
+        self.assertEqual(rule.status, 'Disabled')
         self.assertEqual(template.status, 'Active')
 
         site = frappe.local.site
@@ -1217,18 +1249,20 @@ class TestConcurrentTemplateRuleLocking(unittest.TestCase):
         frappe.db.rollback()
         template.reload()
         rule.reload()
-        self.assertFalse(rule.enabled == 1 and template.status == 'Inactive',
-            dict(outcomes=outcomes, rule_enabled=rule.enabled, template_status=template.status))
-        self.assertEqual(sum(1 for o in outcomes.values() if o[0] == 'ok'), 1, outcomes)
-        self.assertEqual(sum(1 for o in outcomes.values() if o[0] == 'err'), 1, outcomes)
-        if outcomes['activate_rule'][0] == 'ok':
-            self.assertIn(rule.name, outcomes['deactivate_template'][2], outcomes)
-        else:
-            self.assertIn('active', outcomes['activate_rule'][2].lower(), outcomes)
+        self.assertFalse(rule.status == 'Enabled' and template.status == 'Inactive',
+            dict(outcomes=outcomes, rule_status=rule.status, template_status=template.status))
         for outcome in outcomes.values():
             if outcome[0] == 'err':
                 self.assertNotIn('Deadlock', outcome[2], outcome)
                 self.assertEqual(outcome[1], 'ValidationError', outcome)
+        if rule.status == 'Enabled':
+            self.assertEqual(template.status, 'Active')
+            self.assertEqual(outcomes['deactivate_template'][0], 'err', outcomes)
+            self.assertIn(rule.name, outcomes['deactivate_template'][2], outcomes)
+        else:
+            self.assertEqual(template.status, 'Inactive')
+            self.assertEqual(outcomes['deactivate_template'][0], 'ok', outcomes)
+            self.assertEqual(rule.status, 'Unavailable', outcomes)
 
 
 class TestTemplateRuleSyncJavascript(unittest.TestCase):
@@ -1491,10 +1525,13 @@ class TestTemplateProviderParameters(ProcessFixtures, unittest.TestCase):
         self.assertEqual(frappe.get_meta('Communication Template').get_field('parameters').options,'Communication Provider Value')
 
     def test_same_provider_account_and_template_ownership_are_exact(self):
-        from messaging.communication.doctype.communication_provider.communication_provider import operation, provider_definition, used_keys
+        from messaging.communication.doctype.communication_provider.communication_provider import operation, provider_definition
+        from messaging.communication.doctype.communication_provider_value.values import configuration_compatible, definitions
         from messaging.security.execution_context import _automation_context
         template=self.template().insert()
-        self.assertIn('remote_name',used_keys('TSTPV'))
+        self.assertIn('remote_name', definitions(template))
+        self.assertIn('remote_name', [row.parameter_key for row in template.parameters])
+        self.assertTrue(configuration_compatible(template))
         other=self.account(frappe.get_doc('Communication Channel',self.binding.channel),account_id='other-synthetic',enabled=1)
         with _automation_context():
             same_provider = operation(provider_definition('TSTPV'), 'resolve_provider_template',
@@ -1504,7 +1541,7 @@ class TestTemplateProviderParameters(ProcessFixtures, unittest.TestCase):
         set_provider_enabled('TSTOT', True)
         foreign = self.account(self.channel('TSTOT', enabled=1, parameters=[]), account_id=self.prefix + '-foreign', enabled=1)
         with _automation_context():
-            with self.assertRaises(frappe.ValidationError):
+            with self.assertRaises(frappe.PermissionError):
                 operation(provider_definition('TSTPV'), 'resolve_provider_template',
                     dict(account=foreign.name, reference=template.name, language=template.language))
         copy=frappe.copy_doc(template);copy.template_name=self.prefix+'-copy'

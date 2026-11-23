@@ -905,12 +905,19 @@ class TestHumanFlowConfiguration(ProcessFixtures, unittest.TestCase):
         self.assertEqual(settings.human_transfer_states[0].state,state_name(flow.name, 'success'))
 
     def test_settings_is_no_longer_a_process_approval_source(self):
-        from messaging.communication.doctype.process_definition.validation import describe, test_method
+        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process as validate_flow_process
+        from messaging.communication.doctype.notification_rule.notification_rule import validate_process as validate_rule_process
+        from messaging.communication.doctype.process_definition import approval, validation
         settings=get_bot_settings()
-        for endpoint in (describe,test_method):
-            with self.subTest(endpoint=endpoint.__name__), self.assertRaises(frappe.PermissionError):endpoint(settings.as_dict())
+        self.assertNotIn('Bot Settings', approval.CONSUMER_TYPES)
+        with self.assertRaises(frappe.PermissionError):
+            validation._configuration(settings.as_dict())
+        for endpoint in (validate_flow_process, validate_rule_process):
+            with self.subTest(endpoint=endpoint.__module__), self.assertRaises(frappe.ValidationError):
+                endpoint(settings.as_dict())
         for field in ('human_availability_process_method','process_test_status','process_test_fingerprint',
-                      'process_test_checked_at','process_test_checked_by','process_test_log'):
+                      'process_test_checked_at','process_test_checked_by','process_test_log',
+                      'approval_hash','approved_process_revision','approved_contract_hash'):
             self.assertIsNone(settings.meta.get_field(field))
 
     def test_human_flow_can_be_reactivated_without_disabling_settings(self):
@@ -1007,13 +1014,13 @@ class TestFeatureActivation(ProcessFixtures, unittest.TestCase):
         self.definitions.append(BotProcess(id=flow.process_definition, label='Technical inputs', definition=contract_flow, handler=contract_business))
         register_processes(app='messaging', processes=self.definitions)
         self.assertEqual(self.approve(flow)['status'], 'Passed')
-        self.activate(flow)
+        self.assertEqual(flow.status, 'Enabled')
         return flow
 
     def enabled_flow(self, function='technical_flow'):
         flow = self.flow(function)
         self.assertEqual(self.approve(flow)['status'], 'Passed')
-        self.activate(flow)
+        self.assertEqual(flow.status, 'Enabled')
         return flow
 
     def test_each_feature_requires_flow_and_complete_states_only_while_enabled(self):
@@ -1023,7 +1030,8 @@ class TestFeatureActivation(ProcessFixtures, unittest.TestCase):
             flow = self.enabled_registration_flow() if consumer == 'registration' else ordinary
             enabled = 'human_attention_enabled' if consumer == 'human' else consumer + '_enabled'
             with self.subTest(consumer=consumer):
-                self.activate(flow)
+                if flow.status != 'Enabled':
+                    self.activate(flow)
                 settings = get_bot_settings()
                 settings.set(enabled, 1)
                 with self.assertRaises(frappe.ValidationError): settings.save()
@@ -1086,6 +1094,7 @@ class TestFeatureActivation(ProcessFixtures, unittest.TestCase):
 
     def test_multiple_consumer_flows_revalidate_and_reactivate_independently(self):
         from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
+        from messaging.communication.doctype.process_definition import approval
         registration = self.enabled_registration_flow()
         greeting = self.enabled_flow('alternate_flow')
         settings = get_bot_settings()
@@ -1101,18 +1110,26 @@ class TestFeatureActivation(ProcessFixtures, unittest.TestCase):
         self.activate(greeting, False)
         with self.assertRaises(frappe.ValidationError):
             get_bot_settings().require_operational_configuration()
-        self.assertEqual( self.activate(registration, True)['lifecycle_status'], 'Enabled')
-        self.assertEqual(self.activate(greeting, True)['lifecycle_status'], 'Enabled')
+        self.assertEqual(self.activate(registration, True)['consumer_status'], 'Enabled')
+        self.assertEqual(self.activate(greeting, True)['consumer_status'], 'Enabled')
         get_bot_settings().require_operational_configuration()
-        from messaging.communication.doctype.process_definition.validation import _invalidation_key
         for doc in (registration, greeting):
             doc.reload()
-            key = _invalidation_key(doc)
-            self.keys.add(key)
-            frappe.cache.set(key, 'invalid')
-            self.assertEqual(doc.lifecycle_status, 'Untested')
-        self.assertEqual(validate_process(registration.as_dict())['lifecycle_status'], 'Enabled')
-        self.assertEqual(validate_process(greeting.as_dict())['lifecycle_status'], 'Enabled')
+            values = approval.invalidate(doc, 'process_revision_changed')
+            approval._write(doc, values)
+            doc.reload()
+            self.assertEqual(doc.status, 'Unavailable')
+            self.assertFalse(approval.is_current(doc))
+        with self.assertRaises(frappe.ValidationError):
+            get_bot_settings().require_operational_configuration()
+        self.assertEqual(validate_process(registration.as_dict())['consumer_status'], 'Disabled')
+        registration.reload()
+        self.assertEqual(self.activate(registration, True)['consumer_status'], 'Enabled')
+        with self.assertRaises(frappe.ValidationError):
+            get_bot_settings().require_operational_configuration()
+        self.assertEqual(validate_process(greeting.as_dict())['consumer_status'], 'Disabled')
+        greeting.reload()
+        self.assertEqual(self.activate(greeting, True)['consumer_status'], 'Enabled')
         get_bot_settings().require_operational_configuration()
 
     def test_selected_greeting_completion_controls_only_the_shared_menu(self):

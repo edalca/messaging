@@ -368,7 +368,7 @@ def _selected(definition, binding, *, permission=True):
         frappe.throw(_('The communication channel is disabled.'))
     if account:
         from messaging.communication.doctype.communication_channel_account.binding import resolve_ingress_binding
-        _, account_doc = resolve_ingress_binding(definition['id'], account)
+        _channel_doc, account_doc = resolve_ingress_binding(definition['id'], account)
         if permission:
             account_doc.check_permission('read')
 

@@ -126,9 +126,11 @@ def register():
             validate_preset_configuration(self.process, common)
 
     def test_install_creates_native_templates_and_independent_versions(self):
+        from messaging.communication.doctype.process_definition import approval
         flow = self.install()
         self.assertEqual(flow.application, self.owner)
-        self.assertEqual((flow.status, flow.process_test_status), ('Disabled', 'Untested'))
+        self.assertEqual(flow.status, 'Untested')
+        self.assertFalse(approval.is_current(flow))
         self.assertEqual({r.language for r in flow.output_translations}, {'es', 'en'})
         for row in flow.output_translations:
             template = frappe.get_doc('Bot Flow Template', row.template_reference)

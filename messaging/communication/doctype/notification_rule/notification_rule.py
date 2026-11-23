@@ -681,6 +681,7 @@ def save_rule(*, key, name, process, source_application, source_doctype, events,
             row.send = int(output['send'])
             row.template_reference = template_ref
         candidate.before_validate()
+        validate_conditions(candidate)
         desired = _registered_projection(candidate)
         digest = sha256(json.dumps(desired, sort_keys=True).encode()).hexdigest()
         if doc:

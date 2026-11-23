@@ -1098,6 +1098,7 @@ class InterpretationFixtures:
 	):
 		"""A closed provider double for contract tests, never production classification."""
 
+		from messaging.chatbot.doctype.bot_settings.interpretation import Decision
 		from messaging.registry import ai_providers as wire
 		def evaluate(provider, values, request, **kwargs):
 			settings = frappe.get_single('Bot Settings')
@@ -2442,7 +2443,7 @@ def inbox_competitor(site, sites_path, contact, results):
 
 
 def rq_deadline_probe():
-    """Exercise actual SIGALRM expiry inside an isolated native RQ job."""
+    """Exercise actual deadline expiry inside an isolated native RQ job without mutating SIGALRM."""
     import signal
     import threading
     from messaging.communication.doctype.process_definition import execution
@@ -2664,22 +2665,28 @@ class TestAsyncInbox(unittest.TestCase):
         self.assertEqual(self.turn(arrived[0]).inbox_state, 'Done')
         self.assertFalse(self.turn(arrived[0]).consumed_by)
 
-    def test_connection_fence_and_unsupported_thread_reject_before_claim(self):
-        from messaging.conversation.doctype.chat_turn.inbox import drain_contact, _fenced_connection
+    def test_connection_fence_and_secondary_thread_deadline_enforcement(self):
+        from messaging.conversation.doctype.chat_turn.inbox import _fenced_connection
         from messaging.common.locking import contact_lock
         import threading
         first = self.message(text='Pending')
-        errors = []
-        # Check the unchanged executor contract in a thread without adopting Frappe locals.
-        from messaging.communication.doctype.process_definition.execution import execution_deadline
-        def unsupported():
+        results = []
+        # Verify the executor deadline works and interrupts inside a secondary thread.
+        from messaging.communication.doctype.process_definition import execution
+        def worker_thread():
             try:
-                with execution_deadline():
-                    pass
-            except RuntimeError as exc:
-                errors.append(str(exc))
-        thread = threading.Thread(target=unsupported); thread.start(); thread.join()
-        self.assertEqual(errors, ['Process execution requires a worker with deadline support'])
+                with execution.execution_deadline():
+                    results.append('entered')
+                with patch.object(execution, 'PROCESS_TIMEOUT_SECONDS', 0.02):
+                    with execution.execution_deadline():
+                        while True:
+                            pass
+            except TimeoutError:
+                results.append('timed_out')
+            except Exception as exc:
+                results.append(type(exc).__name__ + ': ' + str(exc))
+        thread = threading.Thread(target=worker_thread); thread.start(); thread.join(timeout=5)
+        self.assertEqual(results, ['entered', 'timed_out'])
         key = frappe.db.get_value('Chat Contact', first['contact'], 'identity_key')
         with contact_lock(key):
             with _fenced_connection(key):
@@ -2691,6 +2698,155 @@ class TestAsyncInbox(unittest.TestCase):
         with patch.object(frappe.local, 'request', object(), create=True):
             with self.assertRaisesRegex(frappe.PermissionError, 'background worker'):
                 process_event({})
+
+    def test_native_human_drain_contact_and_concurrent_secondary_threads(self):
+        import threading
+        from messaging.chatbot.doctype.bot_flow_state.bot_flow_state import state_name
+        from messaging.communication.doctype.process_definition import execution as runtime
+        from messaging.conversation.doctype.chat_turn.chat_turn import turn_result
+        from messaging.conversation.doctype.chat_turn.inbox import drain_contact
+        from messaging.presets.processes.human_availability import (
+            definition as human_definition,
+            handle as human_handle,
+        )
+
+        outputs = []
+        for status in ('open', 'closed', 'filtered'):
+            template = frappe.get_doc(dict(
+                doctype='Bot Flow Template',
+                template_name=self.prefix + '_drain_' + status,
+                enabled=1,
+                language='es',
+                body='Drain support ' + status + '.',
+            )).insert()
+            self.fixture_templates.append(template.name)
+            outputs.append(dict(
+                status_code=status,
+                output_mode='Template',
+                template_reference=template.name,
+                flow_action='Complete Flow' if status == 'open' else 'Cancel Flow',
+            ))
+        flow = self.flow(handler=human_definition, business=human_handle, show_in_menu=0, outputs=outputs)
+        all_open = [dict(weekday=day, enabled=1, start_time='00:00:00', end_time='23:59:59')
+            for day in ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')]
+        all_closed = [dict(weekday=day, enabled=0)
+            for day in ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')]
+        self.configure(
+            interpretation_enabled=0,
+            greeting_enabled=0,
+            quotas_enabled=0,
+            human_attention_enabled=1,
+            human_flow=flow.name,
+            human_transfer_states=[dict(state=state_name(flow.name, 'open'))],
+            human_requests_required=2,
+            human_support_week=all_closed,
+        )
+
+        tracked_contacts = set()
+        def cleanup_human_redis():
+            if not tracked_contacts:
+                return
+            for row in frappe.get_all(
+                'Chat Message',
+                filters={'contact': ['in', list(tracked_contacts)], 'kind': 'Incoming'},
+                fields=['name', 'contact'],
+            ):
+                frappe.cache.delete(*runtime._human_request_keys(row.contact, row.name))
+        self.addCleanup(cleanup_human_redis)
+
+        def human_option_number(turn):
+            state = read_state(frappe.get_doc('Chat Session', turn.session), 'dialogue_state')
+            return next(key for key, row in state['mechanical_menu']['options'].items() if row.get('action') == 'Human')
+
+        # 1. Closed schedule via real EMULR ingress + drain_contact -> 'closed', no Redis increment, no transfer.
+        menu_turn = self.drain(self.message(text='0'))
+        tracked_contacts.add(menu_turn.contact)
+        option = human_option_number(menu_turn)
+        closed_req = self.message(text=option)
+        closed_turn = self.drain(closed_req)
+        self.assertEqual(closed_turn.inbox_state, 'Done')
+        self.assertIn('Drain support closed.', turn_result(closed_turn)['response'])
+        self.assertEqual(frappe.db.get_value('Chat Session', closed_turn.session, 'status'), 'Active')
+        self.assertEqual(
+            frappe.db.get_value('Process Execution Log', {'turn': closed_turn.name, 'source_name': flow.name}, 'functional_status'),
+            'closed',
+        )
+
+        # 2. Open schedule with threshold=2: 1st request -> 'filtered', repeat drain is idempotent, 2nd -> 'open' + transfer + reset.
+        self.configure(human_support_week=all_open, human_requests_required=2)
+        menu_turn = self.drain(self.message(text='0'))
+        option = human_option_number(menu_turn)
+        first_req = self.message(text=option)
+        first_turn = self.drain(first_req)
+        self.assertIn('Drain support filtered.', turn_result(first_turn)['response'])
+        self.assertEqual(frappe.db.get_value('Chat Session', first_turn.session, 'status'), 'Active')
+        # Re-draining the same contact does not duplicate dispatches or increment the counter again.
+        drain_contact(first_turn.contact)
+        self.assertEqual(frappe.db.count('Bot Dispatch', {'turn': first_turn.name}), 1)
+        self.assertEqual(frappe.db.count('Process Execution Log', {'turn': first_turn.name}), 1)
+
+        menu_turn = self.drain(self.message(text='0'))
+        option = human_option_number(menu_turn)
+        second_req = self.message(text=option)
+        with patch('messaging.conversation.doctype.chat_session.human.capacity', return_value=None):
+            second_turn = self.drain(second_req)
+        self.assertIn('Drain support open.', turn_result(second_turn)['response'])
+        self.assertEqual(frappe.db.get_value('Chat Session', second_turn.session, 'status'), 'Human Queued')
+        second_msg = frappe.db.get_value('Chat Message', {'turn': second_turn.name, 'kind': 'Incoming'}, 'name')
+        counter_key, receipt_key = runtime._human_request_keys(second_turn.contact, second_msg)
+        self.assertFalse(frappe.cache.exists(counter_key, shared=True))
+        self.assertTrue(frappe.cache.exists(receipt_key, shared=True))
+
+        # 3. Concurrent execution in secondary threads (gthread compatibility) for two independent contacts.
+        self.configure(human_support_week=all_open, human_requests_required=1)
+        sender_a = self.contact().sender_id
+        sender_b = self.contact().sender_id
+        menu_a = self.drain(self.message(sender=sender_a, text='0'))
+        menu_b = self.drain(self.message(sender=sender_b, text='0'))
+        tracked_contacts.update((menu_a.contact, menu_b.contact))
+        req_a = self.message(sender=sender_a, text=human_option_number(menu_a))
+        req_b = self.message(sender=sender_b, text=human_option_number(menu_b))
+        frappe.db.commit()
+
+        site, sites_path = frappe.local.site, frappe.local.sites_path
+        barrier = threading.Barrier(2)
+        errors = {}
+
+        def drain_in_secondary_thread(label, contact_name):
+            frappe.init(site=site, sites_path=sites_path)
+            frappe.connect()
+            frappe.set_user('Administrator')
+            try:
+                barrier.wait(timeout=10)
+                with patch('messaging.conversation.doctype.chat_session.human.capacity', return_value=None):
+                    drain_contact(contact_name)
+                frappe.db.commit()
+            except Exception as exc:
+                frappe.db.rollback()
+                errors[label] = exc
+            finally:
+                frappe.destroy()
+
+        threads = [
+            threading.Thread(target=drain_in_secondary_thread, args=('a', req_a['contact'])),
+            threading.Thread(target=drain_in_secondary_thread, args=('b', req_b['contact'])),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, {})
+        frappe.db.rollback()
+        for req in (req_a, req_b):
+            turn = self.turn(req)
+            self.assertEqual(turn.inbox_state, 'Done')
+            self.assertIn('Drain support open.', turn_result(turn)['response'])
+            self.assertEqual(frappe.db.get_value('Chat Session', turn.session, 'status'), 'Human Queued')
+            self.assertEqual(
+                frappe.db.get_value('Process Execution Log', {'turn': turn.name, 'source_name': flow.name}, 'functional_status'),
+                'open',
+            )
 
     def test_real_native_rq_ingress_execution_and_response(self):
         from frappe.utils.background_jobs import get_job
@@ -3124,7 +3280,7 @@ class TestNativeFlowConsumers(unittest.TestCase):
 
     def test_native_human_counter_disabled_closed_and_administrative_validation_have_no_effects(self):
         from messaging.communication.doctype.process_definition import execution as runtime
-        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
+        from messaging.chatbot.doctype.bot_flow.bot_flow import set_active, validate_process
         flow = self.native_human_counter()
         next(r for r in flow.outputs if r.status_code == 'filtered').output_mode = 'Message'
         flow.save()
@@ -3136,6 +3292,8 @@ class TestNativeFlowConsumers(unittest.TestCase):
             return original(script, *args, **kwargs)
         with patch.object(frappe.cache, 'eval', side_effect=only_technical_scripts):
             self.assertEqual(validate_process(flow.as_dict())['status'], 'Passed')
+            flow.reload()
+            set_active(flow.as_dict(), 1)
             self.configure(human_support_week=[dict(weekday=day, enabled=0)
                 for day in ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')])
             closed = self.send(human_requested=True)

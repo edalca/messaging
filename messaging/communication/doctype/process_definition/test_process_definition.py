@@ -4,6 +4,7 @@ import json
 import socket
 import subprocess
 import signal
+import threading
 import time
 import unittest
 from unittest.mock import DEFAULT, patch
@@ -13,7 +14,7 @@ import frappe
 from messaging.communication.doctype.communication_channel.communication_channel import set_channel_status
 from messaging.registry.processes import BotProcess, BotRequest, BotResponse, NotifyNoResponse, NotifyProcess, NotifyRequest, NotifyResponse, ProcessReference, _freeze
 from messaging.registry.processes import register_processes
-from messaging.communication.doctype.process_definition import execution as process, validation as testing
+from messaging.communication.doctype.process_definition import approval, execution as process
 from messaging.communication.doctype.process_definition.execution import _ProcessContext
 from messaging.registry.processes.discovery import discover_contract
 from messaging.communication.doctype.process_definition.execution import run_handler
@@ -207,8 +208,67 @@ def invalid_discovery_schema(*, params, outcomes):
     return response
 
 
+_THREAD_PROBE_EVENTS = []
+_THREAD_PROBE_LOCK = threading.Lock()
+
+
+def thread_probe_flow(*, params, outcomes):
+    params.register('mode', type='string', required=True)
+    params.register('label', type='string', required=False)
+    outcomes.register('success', fields={'label': 'string'}, mode=['message', 'template'], action='complete_flow')
+
+
+def thread_probe_business(request: BotRequest) -> BotResponse:
+    mode = request.params['mode']
+    label = request.params.get('label') or ''
+    if mode == 'ok':
+        return BotResponse('success', data={'label': label}, message='Completed ' + label)
+    if mode == 'slow_ok':
+        time.sleep(0.08)
+        return BotResponse('success', data={'label': label}, message='Slow ok ' + label)
+    if mode == 'cpu_timeout':
+        counter = 0
+        while True:
+            counter += 1
+    if mode == 'sleep_timeout':
+        time.sleep(2.0)
+        with _THREAD_PROBE_LOCK:
+            _THREAD_PROBE_EVENTS.append('residual:' + label)
+        return BotResponse('success', data={'label': label}, message='Residual ' + label)
+    if mode == 'error':
+        raise ValueError('Synthetic business failure ' + label)
+    if mode == 'write_then_timeout':
+        doc = frappe.get_doc(dict(doctype='Tag', __newname='rb_' + label))
+        doc.insert(ignore_permissions=True)
+        time.sleep(2.0)
+        with _THREAD_PROBE_LOCK:
+            _THREAD_PROBE_EVENTS.append('residual_write:' + label)
+        return BotResponse('success', data={'label': label}, message='Unreachable')
+    raise ValueError('Unknown mode')
+
+
+def thread_notice_definition(*, params, outcomes):
+    outcomes.register('prepared', fields={'recipient': 'string', 'label': 'string'}, mode=['template', 'message'])
+
+
+def thread_notice_business(request: NotifyRequest) -> NotifyResponse | NotifyNoResponse:
+    source = frappe.get_doc(request.source.doctype, request.source.name)
+    description = source.description or ''
+    if description.startswith('timeout:'):
+        time.sleep(2.0)
+        with _THREAD_PROBE_LOCK:
+            _THREAD_PROBE_EVENTS.append('residual_notice:' + description)
+    elif description.startswith('error:'):
+        raise RuntimeError('Synthetic notice failure')
+    elif description.startswith('slow_ok:'):
+        time.sleep(0.06)
+    return NotifyResponse('prepared', data={'recipient': '+50499991234', 'label': description})
+
+
 DECLARATION_HANDLERS = {
     'technical_flow': 'technical_business',
+    'thread_probe_flow': 'thread_probe_business',
+    'thread_notice_definition': 'thread_notice_business',
     'alternate_flow': 'alternate_business',
     'native_read_flow': 'native_read_business',
     'negative_flow': 'negative_business',
@@ -335,35 +395,32 @@ class ProcessFixtures:
 class TestProcessAvailability(ProcessFixtures, unittest.TestCase):
     def test_desk_status_preserves_activation_without_retired_checkboxes(self):
         from frappe.desk.form.load import getdoc
-        from messaging.communication.doctype.process_definition import process_definition as catalogue
         for active, function in ((True, 'technical_flow'), (False, 'alternate_flow')):
             flow = self.flow(function, show_in_menu=0)
             self.approve(flow)
-            if active:
-                self.activate(flow)
-            else:
+            if not active:
                 self.activate(flow, False)
             administrative_status = 'Enabled' if active else 'Disabled'
             with patch('messaging.security.permissions.installed_applications', return_value=['frappe']):
                 frappe.response.docs = []
                 getdoc('Bot Flow', flow.name)
                 shown = next(doc for doc in frappe.response.docs if doc.doctype == 'Bot Flow')
-                self.assertEqual(shown.status, 'Unavailable')
                 self.assertNotIn('enabled', shown.as_dict())
                 self.assertEqual(frappe.db.get_value('Bot Flow', flow.name, 'status'), administrative_status)
+                self.assertFalse(approval.is_current(flow))
                 frappe.response.docs = []
                 getdoc('Process Definition', flow.process_definition)
                 shown = next(doc for doc in frappe.response.docs if doc.doctype == 'Process Definition')
                 self.assertEqual(shown.status, 'Unavailable')
                 self.assertNotIn('available', shown.as_dict())
             flow.reload()
-            self.assertEqual(flow.lifecycle_status, administrative_status)
+            self.assertEqual(flow.status, administrative_status)
+            self.assertTrue(approval.is_current(flow))
 
     def test_uninstall_hook_preserves_definitions_consumers_and_is_idempotent(self):
         from messaging.communication.doctype.process_definition import process_definition as catalogue
         flow = self.flow()
         self.approve(flow)
-        self.activate(flow)
         before_flow = frappe.db.get_value('Bot Flow', flow.name, '*', as_dict=True)
         definition = frappe.get_doc('Process Definition', flow.process_definition)
         before_definition = definition.as_dict()
@@ -382,39 +439,53 @@ class TestProcessAvailability(ProcessFixtures, unittest.TestCase):
         self.assertEqual(definition.status, 'Unavailable')
         for key in ('name', 'creation', 'method', 'capability_revision', 'contract_version', 'application'):
             self.assertEqual(definition.get(key), before_definition[key])
-        self.assertEqual(before_flow, frappe.db.get_value('Bot Flow', flow.name, '*', as_dict=True))
+        flow.reload()
+        self.assertEqual(flow.status, 'Unavailable')
+        self.assertFalse(approval.is_current(flow))
+        self.assertEqual(json.loads(flow.approval_invalidation)[-1]['reason'], 'process_unavailable')
+        for key in ('name', 'workflow_code', 'process_definition', 'approval_hash', 'process_test_log'):
+            self.assertEqual(flow.get(key), before_flow[key])
         self.assertTrue(frappe.db.exists('Process Execution Log', flow.process_test_log))
         self.assertEqual(definition.lifecycle_status, 'Unavailable')
-        self.assertEqual(flow.lifecycle_status, 'Unavailable')
-        # Re-registration belongs to the owner. Restoring the identical contract
-        # must not discard its previous approval just because it was absent.
+        # Re-registration restores Process availability while keeping the consumer Unavailable until explicitly revalidated.
         register_processes(app='messaging', processes=self.definitions)
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertEqual(testing.test_state(flow), 'Passed')
+        definition.reload()
+        self.assertEqual(definition.status, 'Enabled')
+        flow.reload()
+        self.assertEqual(flow.status, 'Unavailable')
+        self.assertEqual(self.approve(flow)['status'], 'Passed')
+        self.assertEqual(flow.status, 'Enabled')
+        self.assertTrue(approval.is_current(flow))
 
     def test_disabled_flow_recovers_disabled_and_changed_contract_needs_approval(self):
+        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
         from messaging.communication.doctype.process_definition import process_definition as catalogue
         flow = self.flow(show_in_menu=0)
         self.approve(flow)
         self.activate(flow, False)
-        before = frappe.db.get_value('Bot Flow', flow.name, '*', as_dict=True)
-        self.assertEqual(flow.lifecycle_status, 'Disabled')
+        self.assertEqual(flow.status, 'Disabled')
+        self.assertTrue(approval.is_current(flow))
         with patch.object(frappe.db, 'commit'), patch('messaging.security.permissions.installed_applications', return_value=['frappe']):
             catalogue.after_app_uninstall('messaging')
-            self.assertEqual(flow.lifecycle_status, 'Unavailable')
-            self.assertEqual(testing.test_state(flow, remember_invalid=True), 'Unavailable')
+        flow.reload()
+        self.assertEqual(flow.status, 'Unavailable')
+        self.assertFalse(approval.is_current(flow))
+        self.assertEqual(json.loads(flow.approval_invalidation)[-1]['reason'], 'process_unavailable')
         register_processes(app='messaging', processes=self.definitions)
-        self.assertEqual(flow.lifecycle_status, 'Disabled')
-        self.assertEqual(before, frappe.db.get_value('Bot Flow', flow.name, '*', as_dict=True))
-        self.register('alternate_flow', identifier=flow.process_definition)
-        self.assertEqual(flow.lifecycle_status, 'Untested')
+        self.assertEqual(validate_process(flow.as_dict())['consumer_status'], 'Disabled')
+        flow.reload()
         self.assertEqual(flow.status, 'Disabled')
+        self.assertTrue(approval.is_current(flow))
+        self.register('alternate_flow', identifier=flow.process_definition)
+        flow.reload()
+        self.assertEqual(flow.status, 'Unavailable')
+        self.assertFalse(approval.is_current(flow))
+        self.assertEqual(json.loads(flow.approval_invalidation)[-1]['reason'], 'process_revision_changed')
 
     def test_missing_owner_blocks_warm_cache_and_execution_without_hook(self):
         from messaging.communication.doctype.process_definition.process_definition import resolve_definition
         flow = self.flow()
         self.approve(flow)
-        self.activate(flow)
         self.assertIn('messaging', frappe.get_installed_apps())
         installed = [app for app in frappe.get_installed_apps() if app != 'messaging']
         frappe.db.set_value('DefaultValue', {'parent': '__global', 'defkey': 'installed_apps'},
@@ -430,14 +501,12 @@ class TestProcessAvailability(ProcessFixtures, unittest.TestCase):
         self.assertEqual(frappe.db.get_value('Process Definition', flow.process_definition, 'status'), 'Enabled')
 
     def test_unavailable_flow_is_excluded_before_queue_capture_and_catalogues(self):
-        from messaging.communication.doctype.process_definition import process_definition as catalogue
         from messaging.conversation.doctype.chat_session import chat_session as sessions
         from messaging.chatbot.doctype.bot_settings.bot_settings import get_bot_settings, get_menu_flows
         from messaging.chatbot.doctype.bot_settings.interpretation import catalog
         flow = self.flow(show_in_menu=1)
         flow.translations[0].menu_label = 'Technical option'
         self.approve(flow)
-        self.activate(flow)
         self.assertIn(flow.name, catalog())
         self.assertIn(flow.name, {row['workflow_code'] for row in get_menu_flows()})
         state = dict(queue=[], values={})
@@ -482,15 +551,16 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         self.assertIsNot(first, second)
 
     def test_discovery_outage_does_not_affect_registered_approvals(self):
-        from messaging.chatbot.doctype.bot_flow.bot_flow import state, set_active
+        from messaging.chatbot.doctype.bot_flow.bot_flow import set_active
         from messaging.registry.processes import discovery as registry
         flow = self.flow(); self.approve(flow)
-        with patch.object(registry, '_discover_contract', side_effect=subprocess.TimeoutExpired('discovery',30)):
-            flow.onload()
-            self.assertEqual(flow.get_onload('flow_lifecycle')['lifecycle_status'],'Enabled')
-            self.assertEqual(state(flow.name)['lifecycle_status'],'Enabled')
-            self.activate(flow,False)
-            self.assertEqual(set_active(flow.as_dict(),1)['lifecycle_status'],'Enabled')
+        with patch.object(registry, '_discover_contract', side_effect=subprocess.TimeoutExpired('discovery', 30)):
+            flow.reload()
+            self.assertEqual(flow.status, 'Enabled')
+            self.assertTrue(approval.is_current(flow))
+            self.activate(flow, False)
+            self.assertEqual(flow.status, 'Disabled')
+            self.assertEqual(set_active(flow.as_dict(), 1)['consumer_status'], 'Enabled')
 
     def test_unreadable_discovery_response_is_rejected_without_approval(self):
         from messaging.registry.processes import discovery as registry
@@ -501,19 +571,75 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
                 with self.assertRaisesRegex(frappe.ValidationError, 'could not be verified'):
                     discover_contract(definition)
 
-    def test_business_deadline_still_rejects_web_threads_and_restores_timer(self):
-        with patch.object(process.threading, 'current_thread', return_value=object()):
-            with self.assertRaisesRegex(RuntimeError, 'deadline support'):
-                with process.execution_deadline():
-                    self.fail('Unsupported worker must not enter business execution')
-        previous = signal.getsignal(signal.SIGALRM)
-        with patch.object(process, 'PROCESS_TIMEOUT_SECONDS', 0.02):
+    def test_business_deadline_supports_main_and_secondary_threads_without_signal_mutation(self):
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        with patch.object(process, 'PROCESS_TIMEOUT_SECONDS', 0.03):
             with self.assertRaises(TimeoutError):
                 with process.execution_deadline():
                     while True:
                         pass
-        self.assertIs(signal.getsignal(signal.SIGALRM), previous)
-        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        self.assertIs(signal.getsignal(signal.SIGALRM), previous_handler)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), previous_timer)
+
+        secondary = {}
+        def run_secondary():
+            started = time.monotonic()
+            cleaned = False
+            residual = False
+            try:
+                with patch.object(process, 'PROCESS_TIMEOUT_SECONDS', 0.03):
+                    with process.execution_deadline():
+                        try:
+                            while True:
+                                pass
+                        finally:
+                            cleaned = (sum(range(50)) == 1225)
+                    residual = True
+            except TimeoutError:
+                secondary['cpu'] = ('timeout', round(time.monotonic() - started, 4), cleaned, residual)
+            started = time.monotonic()
+            residual_sleep = False
+            try:
+                with patch.object(process, 'PROCESS_TIMEOUT_SECONDS', 0.03):
+                    with process.execution_deadline():
+                        time.sleep(1.0)
+                        residual_sleep = True
+            except TimeoutError:
+                secondary['sleep'] = ('timeout', round(time.monotonic() - started, 4), residual_sleep)
+            with patch.object(process, 'PROCESS_TIMEOUT_SECONDS', 1.0):
+                with process.execution_deadline():
+                    time.sleep(0.02)
+                    secondary['ok'] = True
+
+        worker = threading.Thread(target=run_secondary)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(secondary['cpu'][0], 'timeout')
+        self.assertTrue(secondary['cpu'][2])
+        self.assertFalse(secondary['cpu'][3])
+        self.assertLess(secondary['cpu'][1], 0.5)
+        self.assertEqual(secondary['sleep'][0], 'timeout')
+        self.assertFalse(secondary['sleep'][2])
+        self.assertLess(secondary['sleep'][1], 0.5)
+        self.assertTrue(secondary['ok'])
+        self.assertIs(signal.getsignal(signal.SIGALRM), previous_handler)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), previous_timer)
+
+        # MariaDB per-session statement timeout aborts slow queries cleanly and restores limits.
+        prev_stmt, prev_lock = frappe.db.sql(
+            'SELECT @@SESSION.max_statement_time, @@SESSION.innodb_lock_wait_timeout'
+        )[0]
+        with patch.object(process, 'PROCESS_TIMEOUT_SECONDS', 0.08):
+            with self.assertRaises(TimeoutError):
+                with process.execution_deadline():
+                    frappe.db.sql('SELECT SLEEP(2)')
+        after_stmt, after_lock = frappe.db.sql(
+            'SELECT @@SESSION.max_statement_time, @@SESSION.innodb_lock_wait_timeout'
+        )[0]
+        self.assertEqual((float(after_stmt), int(after_lock)), (float(prev_stmt), int(prev_lock)))
+        self.assertEqual(frappe.db.sql('SELECT 1')[0][0], 1)
 
     def test_single_handler_and_result_defaults_are_isolated(self):
         definition = BotProcess(id='messaging.technical', label='Technical', definition=technical_flow, handler=technical_business)
@@ -712,15 +838,21 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         self.assertEqual(before, {row.name: row for row in frappe.get_all('Process Definition', fields=['*'])})
 
     def test_administrative_validation_requires_evidence_and_enables_flow(self):
+        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
         flow = self.flow()
-        flow.process_test_status = 'Passed'
+        flow.approval_hash = 'forged'
         flow.insert()
-        self.assertEqual(testing.test_state(flow), 'Untested')
+        self.assertEqual(flow.status, 'Untested')
+        self.assertFalse(flow.approval_hash)
+        self.assertFalse(approval.is_current(flow))
+        validated = validate_process(flow.as_dict())
+        self.assertEqual(validated['status'], 'Passed', validated)
+        self.assertEqual(validated['consumer_status'], 'Disabled')
+        flow.reload()
         self.assertEqual(flow.status, 'Disabled')
-        result = self.approve(flow)
-        self.assertEqual(result['status'], 'Passed', result)
-        self.assertEqual(flow.lifecycle_status, 'Enabled')
-        self.assertEqual(testing.test_state(flow), 'Passed')
+        self.assertTrue(approval.is_current(flow))
+        self.activate(flow)
+        self.assertEqual(flow.status, 'Enabled')
         result = self.execute(flow)
         self.assertTrue(result['functional'], result)
         self.assertEqual(result['text'], 'Technical result')
@@ -729,27 +861,40 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         self.assertEqual(json.loads(flow.process_test_evidence)['scope'], 'structural_contract')
 
     def test_validation_rejects_unsaved_and_dirty_flow_configurations(self):
-        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process
+        from messaging.chatbot.doctype.bot_flow.bot_flow import set_active, validate_process
         flow = self.flow()
         with self.assertRaises(frappe.ValidationError):
             validate_process(flow.as_dict())
         flow.insert()
-        flow.workflow_name = 'An unsaved edit'
+        stale = flow.as_dict()
         with self.assertRaises(frappe.ValidationError):
-            validate_process(flow.as_dict())
-        with self.assertRaises(frappe.PermissionError):
-            testing.test_method(flow.as_dict())
+            set_active(stale, 1)
+        flow.workflow_name = 'Saved change'
+        flow.save()
+        with self.assertRaises(frappe.TimestampMismatchError):
+            validate_process(stale)
+        dirty = dict(flow.as_dict(), workflow_name='Unsaved client edit')
+        self.assertEqual(validate_process(dirty)['consumer_status'], 'Disabled')
+        flow.reload()
+        self.assertEqual(flow.workflow_name, 'Saved change')
 
     def test_guest_cannot_discover_or_validate(self):
-        candidate = self.flow().as_dict()
-        frappe.set_user('Guest')
+        from messaging.chatbot.doctype.bot_flow.bot_flow import set_active, validate_process
         from messaging.chatbot.doctype.bot_flow.contract import discover
-        for operation in (lambda:discover(candidate),lambda:testing.test_method(candidate)):
+        flow = self.flow()
+        flow.insert()
+        candidate = flow.as_dict()
+        frappe.set_user('Guest')
+        for operation in (
+            lambda: discover(candidate),
+            lambda: validate_process(candidate),
+            lambda: set_active(candidate, 1),
+        ):
             with self.assertRaises(frappe.PermissionError):
                 operation()
 
     def test_notification_discovery_and_structural_approval_need_no_source_document(self):
-        rule,source = self.notification()
+        rule, source = self.notification()
         from messaging.communication.doctype.notification_rule.contract import synchronize
         synchronize(rule)
         template = frappe.get_doc(dict(doctype='Communication Template', channel=frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name'), status='Active',
@@ -757,13 +902,14 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         for output in rule.outputs:
             output.send = 1 if output.status_code == 'send' else 0
             output.template_reference = template.name if output.status_code == 'send' else None
-        initial=frappe.db.count('Notification Queue')
-        result=self.approve(rule)
-        self.assertEqual(result['status'],'Passed',result)
-        self.assertEqual(testing.test_state(rule),'Passed')
-        self.assertFalse(result['preparation_complete'])
-        self.assertFalse(result['event_proven'])
-        self.assertEqual(frappe.db.count('Notification Queue'),initial)
+        initial = frappe.db.count('Notification Queue')
+        result = self.approve(rule)
+        self.assertEqual(result['status'], 'Passed', result)
+        self.assertEqual(rule.status, 'Enabled')
+        self.assertTrue(approval.is_current(rule))
+        self.assertEqual(result['functional_status'], 'test')
+        self.assertEqual(frappe.get_doc('Process Execution Log', result['execution_log']).functional_status, 'test')
+        self.assertEqual(frappe.db.count('Notification Queue'), initial)
 
     def test_recreated_definition_cannot_reuse_an_old_approval(self):
         from messaging.communication.doctype.process_definition.process_definition import _registry_write
@@ -771,6 +917,7 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         flow = self.flow()
         self.assertEqual(self.approve(flow)['status'], 'Passed')
         old_log = flow.process_test_log
+        old_hash = flow.approval_hash
         old_definition = frappe.get_doc('Process Definition', flow.process_definition)
         old_code = flow.workflow_code
         frappe.delete_doc('Bot Flow', flow.name)
@@ -782,10 +929,11 @@ class TestProcessContract(ProcessFixtures, unittest.TestCase):
         self.assertTrue(frappe.db.exists('Process Execution Log', old_log))
         new_flow = self.flow()
         new_flow.workflow_code = old_code
-        new_flow.process_test_status = 'Passed'
+        new_flow.approval_hash = old_hash
         new_flow.process_test_log = old_log
         new_flow.insert()
-        self.assertEqual(new_flow.lifecycle_status, 'Untested')
+        self.assertEqual(new_flow.status, 'Untested')
+        self.assertFalse(approval.is_current(new_flow))
         with self.assertRaises(frappe.ValidationError):
             set_active(new_flow.as_dict(), 1)
         self.assertEqual(self.approve(new_flow)['status'], 'Passed')
@@ -924,7 +1072,7 @@ class TestUnifiedProcessAPI(ProcessFixtures, unittest.TestCase):
         self.assertEqual(self.context().params._definitions, [])
 
     def test_invalid_signatures_handlers_parameters_and_modes(self):
-        from messaging.communication.doctype.process_definition.validation import validate_definition_signature, validate_handler_signature, _input_definitions
+        from messaging.registry.processes.contracts import validate_definition_signature, validate_handler_signature, _input_definitions
         for function in (lambda context: None, lambda outcomes: None, lambda *args: None, lambda **kwargs: None):
             with self.assertRaises(frappe.ValidationError): validate_definition_signature(function)
         for value in (None, [], ['message', 'message'], ['provider_template'], 'template', [1]):
@@ -1086,11 +1234,12 @@ class TestUnifiedProcessAPI(ProcessFixtures, unittest.TestCase):
         turn=frappe.get_doc(dict(doctype='Chat Turn',event_key=self.prefix,contact=contact.name,session=session.name,status='Processing')).insert()
         incoming=append_message(session,self.prefix,'Incoming','Synthetic request',turn=turn.name)
         flow=frappe.new_doc('Bot Flow')
-        flow.update(dict(workflow_code=self.prefix,workflow_name='Request probe',status='Disabled',priority=0,show_in_menu=0,
+        flow.update(dict(workflow_code=self.prefix,workflow_name='Request probe',status='Untested',priority=0,show_in_menu=0,
             process_definition=self.register('request_probe')))
         flow.append('translations', dict(language='es', semantic_description='Synthetic request probe'))
         from messaging.chatbot.doctype.bot_flow.contract import synchronize
-        synchronize(flow);self.approve(flow);self.activate(flow)
+        synchronize(flow);self.approve(flow)
+        self.assertEqual(flow.status, 'Enabled')
         result=self.execute(flow,session=session.name,turn=turn.name,execution_id=self.prefix)
         self.assertTrue(result['functional'],result)
         self.assertEqual(result['status'],'observed')
@@ -1381,7 +1530,7 @@ class TestConfigurableParameters(unittest.TestCase):
     def test_five_input_types_exact_serialization_and_reconstruction(self):
         from decimal import Decimal
         from messaging.common.primitives import decimal_json
-        from messaging.communication.doctype.process_definition.validation import _input_value
+        from messaging.registry.processes.contracts import _input_value
         for kind, value in [('string','001'), ('integer',7), ('boolean',False), ('date','2026-11-05')]:
             self.assertEqual(_input_value(kind, value), value)
         for text in ('2.50', '100', '-15.75', '0.125', '12345678901234567890.1234567890123456789012345'):
@@ -1856,6 +2005,154 @@ class TestHumanRequestRedis(unittest.TestCase):
             self.assertEqual(spec['outcomes']['filtered']['action'], 'cancel_flow')
             self.assertEqual(response['status'], 'test')
 
+    def test_record_human_request_operational_authorization_and_profile_value(self):
+        from messaging.common.primitives import utcnow
+        from messaging.communication.doctype.process_definition import process_definition as runtime_defs
+        from messaging.conversation.doctype.chat_contact import chat_contact as contacts
+        from messaging.conversation.doctype.chat_message.chat_message import append_message
+        from messaging.conversation.doctype.chat_session.chat_session import get_session
+        from messaging.registry.processes import ProcessContactReference, ProcessReference
+        from messaging.security.execution_context import _automation_context, authorized_process
+
+        frappe.set_user('Administrator')
+        prefix = 'hr_auth_' + frappe.generate_hash(length=10)
+        channel = frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name')
+        account = frappe.db.get_value('Communication Channel Account', {'channel': channel}, 'name')
+        contact = contacts.get_contact(channel, account, prefix + '_primary')
+        contact.parameter_values = json.dumps({'synthetic_key': 'Existing value'})
+        contact.save(ignore_permissions=True)
+        other_contact = contacts.get_contact(channel, account, prefix + '_other')
+        other_contact.parameter_values = json.dumps({'synthetic_key': 'Other value'})
+        other_contact.save(ignore_permissions=True)
+
+        session = get_session(contact, utcnow())
+        session.status = 'Executing'
+        session.active_flow = 'messaging_human_availability'
+        session.dialogue_state = json.dumps({'human_attention': True})
+        session.save(ignore_permissions=True)
+        turn = frappe.get_doc(dict(
+            doctype='Chat Turn', event_key=prefix + '_t1', contact=contact.name,
+            session=session.name, status='Processing',
+        )).insert(ignore_permissions=True)
+        incoming = append_message(session, prefix + '_m1', 'Incoming', 'Need human', turn=turn.name)
+        outgoing = append_message(session, prefix + '_m2', 'Automatic', 'Ack', turn=turn.name)
+
+        other_session = get_session(other_contact, utcnow())
+        other_turn = frappe.get_doc(dict(
+            doctype='Chat Turn', event_key=prefix + '_t2', contact=other_contact.name,
+            session=other_session.name, status='Processing',
+        )).insert(ignore_permissions=True)
+        other_incoming = append_message(other_session, prefix + '_m3', 'Incoming', 'Other', turn=other_turn.name)
+
+        self.keys_for(incoming.name, contact=contact.name)
+        self.keys_for(other_incoming.name, contact=other_contact.name)
+
+        human_path = 'messaging.presets.processes.human_availability.handle'
+        execution = dict(
+            source_type='Bot Flow',
+            source_name='messaging_human_availability',
+            session=session.name,
+            turn=turn.name,
+            execution_id=prefix + '_exec',
+        )
+        valid_request = BotRequest(
+            language='es',
+            contact=ProcessContactReference('Chat Contact', contact.name),
+            session=ProcessReference('Chat Session', session.name),
+            message=ProcessReference('Chat Message', incoming.name),
+        )
+
+        try:
+            # 1. Authorized operational execution succeeds, is idempotent, and restores _reading.
+            with _automation_context(), authorized_process(human_path, **execution), \
+                runtime_defs.effect_boundary(dict(execution, path=human_path)):
+                self.assertTrue(runtime_defs._reading.get())
+                self.assertEqual(process.record_human_request(valid_request), 1)
+                self.assertTrue(runtime_defs._reading.get())
+                self.assertEqual(process.record_human_request(valid_request), 1)
+                self.assertTrue(runtime_defs._reading.get())
+                # Also verify _reading is restored even if Redis fails.
+                with patch.object(frappe.cache, 'eval', side_effect=RuntimeError('Synthetic Redis failure')):
+                    with self.assertRaises(RuntimeError):
+                        process.record_human_request(valid_request)
+                self.assertTrue(runtime_defs._reading.get())
+                # Under SERVICE_USER (which has no Chat Contact read grant), process_profile_value denies access.
+                with self.assertRaises(frappe.PermissionError):
+                    contacts.process_profile_value(contact.name, 'synthetic_key')
+
+            # Under an authorized reader (Administrator) inside effect_boundary, chat_contact.process_profile_value
+            # uses the current runtime cleanly and still blocks cross-contact access.
+            with runtime_defs.effect_boundary(dict(execution, path=human_path)):
+                self.assertEqual(contacts.process_profile_value(contact.name, 'synthetic_key'), 'Existing value')
+                self.assertEqual(
+                    contacts.process_profile_value(contact.name, 'synthetic_key'),
+                    runtime_defs.process_profile_value(contact.name, 'synthetic_key'),
+                )
+                with self.assertRaises(frappe.PermissionError):
+                    contacts.process_profile_value(other_contact.name, 'synthetic_key')
+
+            # Outside effect_boundary, chat_contact.process_profile_value must be denied.
+            with self.assertRaises(frappe.PermissionError):
+                contacts.process_profile_value(contact.name, 'synthetic_key')
+
+            # 2. All unauthorized / forged contexts must be rejected before touching Redis.
+            with patch.object(frappe.cache, 'eval', side_effect=AssertionError('Unauthorized Redis access')):
+                # Without automation context (Administrator direct call)
+                with authorized_process(human_path, **execution), \
+                    runtime_defs.effect_boundary(dict(execution, path=human_path)):
+                    with self.assertRaises(frappe.PermissionError):
+                        process.record_human_request(valid_request)
+
+                # Different Process handler path
+                other_path = 'messaging.presets.processes.greeting.handle'
+                with _automation_context(), authorized_process(other_path, **execution), \
+                    runtime_defs.effect_boundary(dict(execution, path=other_path)):
+                    with self.assertRaises(frappe.PermissionError):
+                        process.record_human_request(valid_request)
+
+                # Administrative test mode
+                with _automation_context(), authorized_process(human_path, **execution), \
+                    runtime_defs.effect_boundary(dict(execution, path=human_path)):
+                    test_token = runtime_defs._testing.set(True)
+                    try:
+                        with self.assertRaises(frappe.PermissionError):
+                            process.record_human_request(valid_request)
+                    finally:
+                        runtime_defs._testing.reset(test_token)
+
+                    # Forged requests: missing session, wrong session, wrong contact, outgoing/foreign message
+                    for forged in (
+                        BotRequest(contact=valid_request.contact, session=None, message=valid_request.message),
+                        BotRequest(contact=valid_request.contact,
+                            session=ProcessReference('Chat Session', other_session.name), message=valid_request.message),
+                        BotRequest(contact=ProcessContactReference('Chat Contact', other_contact.name),
+                            session=valid_request.session, message=valid_request.message),
+                        BotRequest(contact=valid_request.contact, session=valid_request.session,
+                            message=ProcessReference('Chat Message', outgoing.name)),
+                        BotRequest(contact=valid_request.contact, session=valid_request.session,
+                            message=ProcessReference('Chat Message', other_incoming.name)),
+                    ):
+                        with self.assertRaises(frappe.PermissionError):
+                            process.record_human_request(forged)
+
+                # Invalid Chat Session operational states
+                for field, bad_value in (
+                    ('status', 'Active'),
+                    ('active_flow', 'other_flow'),
+                    ('dialogue_state', json.dumps({'human_attention': False})),
+                ):
+                    original_val = frappe.db.get_value('Chat Session', session.name, field)
+                    frappe.db.set_value('Chat Session', session.name, field, bad_value)
+                    try:
+                        with _automation_context(), authorized_process(human_path, **execution), \
+                            runtime_defs.effect_boundary(dict(execution, path=human_path)):
+                            with self.assertRaises(frappe.PermissionError):
+                                process.record_human_request(valid_request)
+                    finally:
+                        frappe.db.set_value('Chat Session', session.name, field, original_val)
+        finally:
+            frappe.db.rollback()
+
 
 def catalogue_notification(*, params, outcomes):
     params.register('decision', type='string', required=False)
@@ -2130,3 +2427,434 @@ class TestPersistedProcessCatalogue(ProcessFixtures, unittest.TestCase):
         for value in (2,'false','send','skip'):
             row.send=value
             with self.assertRaises(frappe.ValidationError):synchronize(rule)
+
+
+class TestConcurrentThreadDeadlines(unittest.TestCase):
+    """Focused integration checks for secondary-thread execution, concurrency, and DB isolation."""
+
+    def setUp(self):
+        frappe.set_user('Administrator')
+        self.prefix = 'thd_' + frappe.generate_hash(length=8)
+        self.site = frappe.local.site
+        self.sites_path = frappe.local.sites_path
+        self.settings_before = frappe.get_single('Bot Settings').as_dict()
+        self.enabled_flows_before = frappe.get_all('Bot Flow', filters={'status': 'Enabled'}, pluck='name')
+        self.created_flows = []
+        self.created_rules = []
+        self.created_templates = []
+        self.created_params = []
+        self.created_definitions = []
+        self.created_todos = []
+        self.created_logs = []
+        self.created_accounts = []
+        self.created_channels = []
+        self.created_emulr_contact = None
+        self.provider_states_before = None
+        self.addCleanup(self._cleanup)
+        _THREAD_PROBE_EVENTS.clear()
+        configure_test_settings()
+
+        # Register synthetic Bot Flow and Notification processes.
+        self.bot_proc_id = 'messaging.' + self.prefix + '_bot'
+        self.notice_proc_id = 'messaging.' + self.prefix + '_notice'
+        register_processes(app='messaging', processes=[
+            BotProcess(id=self.bot_proc_id, label='Thread Probe Bot', definition=thread_probe_flow, handler=thread_probe_business),
+            NotifyProcess(id=self.notice_proc_id, label='Thread Probe Notice', definition=thread_notice_definition, handler=thread_notice_business),
+        ])
+        self.created_definitions.extend([self.bot_proc_id, self.notice_proc_id])
+
+        # Create approved Bot Flow.
+        from messaging.chatbot.doctype.bot_flow.bot_flow import validate_process as validate_flow, set_active as activate_flow
+        from messaging.chatbot.doctype.bot_flow.contract import synchronize as sync_flow
+        mode_param = frappe.get_doc(dict(
+            doctype='Bot Parameter',
+            name=self.prefix + '_mode',
+            label='Mode',
+            parameter_type='String',
+            enabled=1,
+            request_phrases=[dict(language='es', request_phrase='Indique el modo.')],
+        )).insert()
+        label_param = frappe.get_doc(dict(
+            doctype='Bot Parameter',
+            name=self.prefix + '_label',
+            label='Label',
+            parameter_type='String',
+            enabled=1,
+            request_phrases=[dict(language='es', request_phrase='Indique la etiqueta.')],
+        )).insert()
+        self.created_params.extend([mode_param.name, label_param.name])
+
+        flow = frappe.new_doc('Bot Flow')
+        flow.update(dict(
+            workflow_code=self.prefix + '_flow',
+            workflow_name='Thread Probe Flow',
+            semantic_description='Concurrent secondary thread verification',
+            process_definition=self.bot_proc_id,
+            priority=987,
+            status='Untested',
+            parameters=[
+                dict(parameter=mode_param.name, process_argument='mode', required=1, capture_order=1),
+                dict(parameter=label_param.name, process_argument='label', required=0, capture_order=2),
+            ],
+            outputs=[dict(status_code='success', output_mode='Message', flow_action='Complete Flow')],
+            translations=[dict(
+                language='es',
+                menu_label='Thread Probe',
+                semantic_description='Concurrent secondary thread verification',
+            )],
+            input_translations=[dict(
+                language='es',
+                input_initial_message='Provide input.',
+                input_continuation_message='Provide next input.',
+            )],
+        ))
+        sync_flow(flow)
+        flow.insert()
+        self.created_flows.append(flow.name)
+        validated = validate_flow(flow.as_dict())
+        self.assertEqual(validated['status'], 'Passed')
+        flow.reload()
+        activate_flow(flow.as_dict(), 1)
+        flow.reload()
+        self.assertEqual(flow.status, 'Enabled')
+        self.flow = flow
+
+        # Create EMULR channel/account + approved Notification Rule on ToDo.
+        from messaging.communication.doctype.communication_provider.test_communication_provider import sync_communication_providers
+        from messaging.communication.doctype.communication_provider.communication_provider import (
+            get_provider_states,
+            set_provider_enabled,
+        )
+        from messaging.communication.doctype.notification_rule.notification_rule import (
+            validate_process as validate_rule,
+            set_active as activate_rule,
+        )
+        from messaging.communication.doctype.notification_rule.contract import synchronize as sync_rule
+        self.provider_states_before = get_provider_states()
+        sync_communication_providers()
+        set_provider_enabled('EMULR', True)
+        channel = frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name')
+        if not channel:
+            ch = frappe.get_doc(dict(doctype='Communication Channel', channel_name='Emulator', provider='EMULR')).insert()
+            set_channel_status(ch.name, 'Enabled')
+            channel = ch.name
+            self.created_channels.append(channel)
+        account = frappe.get_doc(dict(
+            doctype='Communication Channel Account',
+            channel=channel,
+            account_id=self.prefix + '_acc',
+            account_name=self.prefix + '_acc',
+            enabled=1,
+        )).insert()
+        self.created_accounts.append(account.name)
+        ec = frappe.get_doc(dict(doctype='Emulator Contact', display_name=self.prefix + '_ec')).insert()
+        self.created_emulr_contact = ec.name
+        template = frappe.get_doc(dict(
+            doctype='Communication Template',
+            template_name=self.prefix + '_tpl',
+            language='es',
+            channel=channel,
+            status='Active',
+            body='Notice {{label}}',
+            template_variables=[dict(parameter_name='label')],
+        )).insert()
+        self.created_templates.append(template.name)
+        rule = frappe.new_doc('Notification Rule')
+        rule.update(dict(
+            rule_name=self.prefix + '_rule',
+            source_application='frappe',
+            source_doctype='ToDo',
+            process_definition=self.notice_proc_id,
+            account=account.name,
+            content_type='Template',
+            notification_delay_minutes=60,
+            events=[dict(document_event='after_insert')],
+            outputs=[dict(status_code='prepared', template_reference=template.name, send=1)],
+            parameters=[dict(parameter_key='notification_contact', value=json.dumps(ec.name))],
+        ))
+        sync_rule(rule)
+        rule.outputs[0].template_reference = template.name
+        rule.outputs[0].send = 1
+        rule.insert()
+        self.created_rules.append(rule.name)
+        validated_rule = validate_rule(rule.as_dict())
+        self.assertEqual(validated_rule['status'], 'Passed', validated_rule)
+        rule.reload()
+        activate_rule(rule.as_dict(), 1)
+        rule.reload()
+        self.assertEqual(rule.status, 'Enabled')
+        self.rule = rule
+        frappe.db.commit()
+
+    def _cleanup(self):
+        frappe.db.rollback()
+        frappe.set_user('Administrator')
+        from messaging.chatbot.doctype.bot_settings.test_bot_settings import restore_bot_settings
+        restore_bot_settings(self.settings_before, self.enabled_flows_before, {}, [])
+        for name in self.created_rules:
+            queues = frappe.get_all('Notification Queue', filters={'notification_rule': name}, pluck='name')
+            if queues:
+                frappe.db.delete('Notification Queue', {'name': ['in', queues]})
+            logs = frappe.get_all('Process Execution Log', filters={'source_name': name}, fields=['name', 'frappe_error_log'])
+            for log in logs:
+                if log.frappe_error_log:
+                    frappe.db.delete('Error Log', {'name': log.frappe_error_log})
+                frappe.db.delete('Process Execution Log', {'name': log.name})
+            frappe.delete_doc('Notification Rule', name, delete_permanently=True, ignore_permissions=True)
+        for name in self.created_flows:
+            logs = frappe.get_all('Process Execution Log', filters={'source_name': name}, fields=['name', 'frappe_error_log'])
+            for log in logs:
+                if log.frappe_error_log:
+                    frappe.db.delete('Error Log', {'name': log.frappe_error_log})
+                frappe.db.delete('Process Execution Log', {'name': log.name})
+            frappe.delete_doc('Bot Flow', name, delete_permanently=True, ignore_permissions=True)
+        for name in self.created_templates:
+            frappe.delete_doc('Communication Template', name, delete_permanently=True, ignore_permissions=True)
+        for name in self.created_accounts:
+            frappe.delete_doc('Communication Channel Account', name, delete_permanently=True, ignore_permissions=True)
+        for name in self.created_channels:
+            frappe.delete_doc('Communication Channel', name, delete_permanently=True, ignore_permissions=True)
+        if getattr(self, 'created_emulr_contact', None):
+            frappe.delete_doc('Emulator Contact', self.created_emulr_contact, delete_permanently=True, ignore_permissions=True)
+        for name in self.created_params:
+            frappe.delete_doc('Bot Parameter', name, delete_permanently=True, ignore_permissions=True)
+        for name in self.created_definitions:
+            frappe.db.delete('Process Definition', {'name': name})
+        if self.created_definitions:
+            from messaging.presets.register import register as setup_processes
+            setup_processes()
+        for name in self.created_todos:
+            if frappe.db.exists('ToDo', name):
+                frappe.delete_doc('ToDo', name, delete_permanently=True, ignore_permissions=True)
+        frappe.db.delete('ToDo', {'description': ['like', f'%{self.prefix}%']})
+        if getattr(self, 'provider_states_before', None):
+            from messaging.communication.doctype.communication_provider.communication_provider import set_provider_enabled
+            for provider_name, state in self.provider_states_before.items():
+                if frappe.db.exists('Communication Provider', provider_name):
+                    set_provider_enabled(provider_name, state == 'Enabled')
+        frappe.db.commit()
+
+    def _run_in_thread(self, fn):
+        output = {}
+        def target():
+            frappe.init(site=self.site, sites_path=self.sites_path)
+            frappe.connect()
+            frappe.set_user('Administrator')
+            try:
+                output['value'] = fn()
+                frappe.db.commit()
+            except Exception as exc:
+                frappe.db.rollback()
+                output['error'] = exc
+            finally:
+                frappe.destroy()
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join(timeout=15)
+        self.assertFalse(thread.is_alive())
+        if 'error' in output:
+            raise output['error']
+        return output['value']
+
+    def test_main_and_secondary_thread_bot_flow_and_notification_execution(self):
+        # 1. Main thread Bot Flow success
+        main_res = process.execute_process(
+            process_method=self.flow.process_method,
+            arguments={'mode': 'ok', 'label': 'main'},
+            source_type='Bot Flow',
+            source_name=self.flow.name,
+        )
+        self.assertEqual(main_res['state'], 'Complete')
+        self.assertEqual(main_res['text'], 'Completed main')
+        frappe.db.commit()
+
+        # 2. Secondary thread Bot Flow success + ordinary exception (zero patches: full revision & contract verification)
+        def secondary_bot_checks():
+            ok = process.execute_process(
+                process_method=self.flow.process_method,
+                arguments={'mode': 'ok', 'label': 'sec'},
+                source_type='Bot Flow',
+                source_name=self.flow.name,
+            )
+            err = process.execute_process(
+                process_method=self.flow.process_method,
+                arguments={'mode': 'error', 'label': 'sec'},
+                source_type='Bot Flow',
+                source_name=self.flow.name,
+            )
+            return ok, err
+
+        ok, err = self._run_in_thread(secondary_bot_checks)
+        self.assertEqual((ok['state'], ok['text']), ('Complete', 'Completed sec'))
+        self.assertEqual((err['state'], err['functional']), ('Failed', False))
+        frappe.db.rollback()
+        err_log = frappe.get_doc('Process Execution Log', err['execution_log'])
+        self.assertEqual((err_log.execution_outcome, err_log.diagnostic_error_type), ('Internal Execution Error', 'ValueError'))
+
+        # 3. Secondary thread Bot Flow real sleep timeout (verified as TimeoutError during invocation)
+        from messaging.communication.doctype.process_definition.process_definition import deadline_scope
+        def secondary_sleep_timeout():
+            return process.execute_process(
+                process_method=self.flow.process_method,
+                arguments={'mode': 'sleep_timeout', 'label': 'sec-sleep'},
+                source_type='Bot Flow',
+                source_name=self.flow.name,
+            )
+
+        with patch.object(process, 'execution_deadline', side_effect=lambda: deadline_scope(0.05)), patch(
+            'messaging.registry.processes.discovery.verify_registered_revision', return_value=None
+        ):
+            timed = self._run_in_thread(secondary_sleep_timeout)
+        self.assertEqual((timed['state'], timed['functional']), ('Unknown', False))
+        frappe.db.rollback()
+        timed_log = frappe.get_doc('Process Execution Log', timed['execution_log'])
+        self.assertEqual((timed_log.execution_outcome, timed_log.diagnostic_error_type), ('Internal Execution Error', 'TimeoutError'))
+        self.assertIn('during invocation', timed_log.diagnostic_detail or '')
+        # Verify zero residual execution after timeout
+        time.sleep(0.15)
+        self.assertEqual(_THREAD_PROBE_EVENTS, [])
+
+        # 4. Secondary thread Notification Rule end-to-end (doc_events after_insert inside transaction, zero patches)
+        def secondary_notice():
+            todo = frappe.get_doc(dict(doctype='ToDo', description='ok:' + self.prefix)).insert()
+            return todo.name
+
+        todo_name = self._run_in_thread(secondary_notice)
+        self.created_todos.append(todo_name)
+        frappe.db.rollback()
+        queued = frappe.get_all('Notification Queue', filters={'notification_rule': self.rule.name, 'source_name': todo_name},
+            fields=['name', 'status', 'rendered_content'])
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0].status, 'Pending')
+        self.assertEqual(queued[0].rendered_content, 'Notice ok:' + self.prefix)
+
+    def test_concurrent_secondary_threads_isolate_deadlines_and_contexts(self):
+        from contextvars import ContextVar
+        from messaging.communication.doctype.process_definition.process_definition import deadline_scope
+        thread_timeout = ContextVar('test_concurrent_timeout', default=30.0)
+        barrier = threading.Barrier(3)
+        results = {}
+        errors = {}
+
+        def worker(key, mode, timeout_seconds):
+            frappe.init(site=self.site, sites_path=self.sites_path)
+            frappe.connect()
+            frappe.set_user('Administrator')
+            token = thread_timeout.set(timeout_seconds)
+            try:
+                barrier.wait(timeout=10)
+                res = process.execute_process(
+                    process_method=self.flow.process_method,
+                    arguments={'mode': mode, 'label': key},
+                    source_type='Bot Flow',
+                    source_name=self.flow.name,
+                )
+                frappe.db.commit()
+                results[key] = res
+            except Exception as exc:
+                frappe.db.rollback()
+                errors[key] = exc
+            finally:
+                thread_timeout.reset(token)
+                frappe.destroy()
+
+        with patch.object(process, 'execution_deadline', side_effect=lambda: deadline_scope(thread_timeout.get())), patch(
+            'messaging.registry.processes.discovery.verify_registered_revision', return_value=None
+        ):
+            threads = [
+                threading.Thread(target=worker, args=('timeout_cpu', 'cpu_timeout', 0.04)),
+                threading.Thread(target=worker, args=('healthy_1', 'slow_ok', 5.0)),
+                threading.Thread(target=worker, args=('healthy_2', 'slow_ok', 30.0)),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=15)
+        self.assertFalse(any(t.is_alive() for t in threads))
+        self.assertEqual(errors, {})
+        self.assertEqual(results['timeout_cpu']['state'], 'Unknown')
+        self.assertFalse(results['timeout_cpu']['functional'])
+        self.assertEqual((results['healthy_1']['state'], results['healthy_1']['text']), ('Complete', 'Slow ok healthy_1'))
+        self.assertEqual((results['healthy_2']['state'], results['healthy_2']['text']), ('Complete', 'Slow ok healthy_2'))
+
+        # Verify distinct logs recorded with accurate TimeoutError during invocation on the timed-out execution.
+        frappe.db.rollback()
+        log = frappe.get_doc('Process Execution Log', results['timeout_cpu']['execution_log'])
+        self.assertEqual(log.execution_outcome, 'Internal Execution Error')
+        self.assertEqual(log.diagnostic_error_type, 'TimeoutError')
+        self.assertIn('during invocation', log.diagnostic_detail or '')
+
+    def test_secondary_thread_timeout_rolls_back_uncommitted_writes(self):
+        # 1. Verify savepoint rollback inside execute_process on secondary-thread timeout:
+        #    a handler that writes a ToDo before timing out leaves zero persisted ToDos
+        #    while recording an Internal Execution Error / TimeoutError log receipt.
+        from messaging.communication.doctype.process_definition.process_definition import deadline_scope
+        from messaging.conversation.doctype.chat_contact.chat_contact import get_contact
+        from messaging.security.execution_context import _automation_context
+
+        def write_and_timeout():
+            channel = frappe.db.get_value('Communication Channel', {'provider': 'EMULR'}, 'name')
+            contact = get_contact(channel, self.created_accounts[0], self.prefix + '_rb_sender')
+            session = frappe.get_doc(dict(
+                doctype='Chat Session',
+                contact=contact.name,
+                channel=contact.channel,
+                account=contact.account,
+                status='Active',
+            )).insert(ignore_permissions=True)
+            turn = frappe.get_doc(dict(
+                doctype='Chat Turn',
+                event_key='rb_evt_' + self.prefix,
+                contact=contact.name,
+                session=session.name,
+                status='Processing',
+                inbox_state='Running',
+                receipt_order=1,
+            )).insert(ignore_permissions=True)
+            try:
+                with _automation_context():
+                    res = process.execute_process(
+                        process_method=self.flow.process_method,
+                        arguments={'mode': 'write_then_timeout', 'label': self.prefix},
+                        source_type='Bot Flow',
+                        source_name=self.flow.name,
+                        session=session.name,
+                        turn=turn.name,
+                        execution_id='rb_exec_' + self.prefix,
+                    )
+                tag_exists = frappe.db.exists('Tag', 'rb_' + self.prefix)
+                return res, tag_exists
+            finally:
+                frappe.db.delete('Chat Turn', {'name': turn.name})
+                frappe.db.delete('Chat Session', {'name': session.name})
+                frappe.db.delete('Chat Contact', {'name': contact.name})
+
+        with patch.object(process, 'execution_deadline', side_effect=lambda: deadline_scope(0.05)), patch(
+            'messaging.registry.processes.discovery.verify_registered_revision', return_value=None
+        ):
+            res, tag_exists = self._run_in_thread(write_and_timeout)
+        self.assertEqual((res['state'], res['functional']), ('Unknown', False))
+        self.assertFalse(tag_exists)
+        frappe.db.rollback()
+        self.assertFalse(frappe.db.exists('Tag', 'rb_' + self.prefix))
+        bot_log = frappe.get_doc('Process Execution Log', res['execution_log'])
+        self.assertEqual((bot_log.execution_outcome, bot_log.diagnostic_error_type), ('Internal Execution Error', 'TimeoutError'))
+        self.assertIn('during invocation', bot_log.diagnostic_detail or '')
+
+        # 2. Verify Notification Rule timeout in a secondary thread logs TimeoutError without queueing.
+        def notice_timeout():
+            todo = frappe.get_doc(dict(doctype='ToDo', description='timeout:' + self.prefix)).insert()
+            return todo.name
+
+        with patch.object(process, 'execution_deadline', side_effect=lambda: deadline_scope(0.05)), patch(
+            'messaging.registry.processes.discovery.verify_registered_revision', return_value=None
+        ):
+            todo_name = self._run_in_thread(notice_timeout)
+        self.created_todos.append(todo_name)
+        frappe.db.rollback()
+        self.assertEqual(frappe.db.count('Notification Queue', {'notification_rule': self.rule.name, 'source_name': todo_name}), 0)
+        log = frappe.get_doc('Process Execution Log', {'source_name': self.rule.name, 'source_document': todo_name})
+        self.assertEqual(log.execution_outcome, 'Internal Execution Error')
+        self.assertEqual(log.diagnostic_error_type, 'TimeoutError')
+        self.assertIn('during invocation', log.diagnostic_detail or '')
+        self.assertEqual(_THREAD_PROBE_EVENTS, [])

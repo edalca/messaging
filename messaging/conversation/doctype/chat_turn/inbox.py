@@ -159,12 +159,8 @@ def _deliver_prepared(contact):
 
 @automatic_job
 def drain_contact(contact_name):
-	"""Bounded work on one conversation, in a signal-compatible native worker process."""
-	from messaging.communication.doctype.process_definition.execution import execution_deadline
+	"""Bounded work on one conversation, independent of worker threading model."""
 	from messaging.conversation.doctype.chat_turn.chat_turn import pending_input_request, process_event
-	# Reject unsupported threads before claiming or executing anything. Keep the original deadline.
-	with execution_deadline():
-		pass
 	require_operator()
 	key = frappe.db.get_value('Chat Contact', contact_name, 'identity_key')
 	if not key:

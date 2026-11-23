@@ -4,6 +4,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import threading
 import frappe
 from frappe import _
 from messaging.communication.doctype.process_definition.process_definition import validate_process_method_path
@@ -29,6 +30,7 @@ NATIVE_PROCESS_CAPABILITIES = frozenset({
     'messaging.communication.doctype.process_definition.execution.record_human_request',
 })
 _CACHE = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def policy_fingerprint():
@@ -58,19 +60,22 @@ def inspect_process(path, app_path=None):
         app_path = Path(spec.origin).parent
     root = Path(app_path).resolve()
     key = (str(root), path, policy_fingerprint())
-    cached = _CACHE.get(key)
-    if cached:
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+        cached_copy = deepcopy(cached) if cached else None
+    if cached_copy:
         try:
-            if all(_hash(Path(file).read_bytes()) == digest for file, digest in cached['sources'].items()):
-                return deepcopy(cached)
+            if all(_hash(Path(file).read_bytes()) == digest for file, digest in cached_copy['sources'].items()):
+                return cached_copy
         except OSError:
             pass
     result = _Inspector(path, root).run()
     if result['inspectable']:
-        if len(_CACHE) >= 128:
-            _CACHE.clear()
-        _CACHE[key] = result
-    return deepcopy(result)
+        with _CACHE_LOCK:
+            if len(_CACHE) >= 128:
+                _CACHE.clear()
+            _CACHE[key] = deepcopy(result)
+    return result
 
 
 class _Inspector:

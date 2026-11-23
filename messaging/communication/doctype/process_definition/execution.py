@@ -4,10 +4,8 @@ import hashlib
 import inspect
 from dataclasses import dataclass, replace
 import json
-import signal
-import threading
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 
 import frappe
 from frappe import _
@@ -21,8 +19,11 @@ from messaging.communication.doctype.process_definition.process_definition impor
     FORBIDDEN_PROCESS_PREFIXES,
     FORBIDDEN_PROCESS_ROOT_MODULES,
     _decimal_values,
+    _reading,
+    _require_write_execution,
     _testing,
     bind_definition,
+    deadline_scope,
     effect_boundary,
     is_process_test,
     process_messages,
@@ -99,30 +100,61 @@ def _human_request_keys(contact, message):
 
 def record_human_request(request):
     """Bounded Redis capability; no caller-supplied keys, commands, TTL or scripts."""
-    _require_write_execution()
-    execution = _effect.get()
-    if (is_process_test() or execution['path'] != 'messaging.presets.processes.human_availability.handle'
-        or not isinstance(request, BotRequest) or not request.contact or not request.message
-        or request.contact.doctype != 'Chat Contact' or request.message.doctype != 'Chat Message'):
+    execution = _require_write_execution()
+    if (
+        is_process_test()
+        or execution['path'] != 'messaging.presets.processes.human_availability.handle'
+        or not isinstance(request, BotRequest)
+        or not request.contact
+        or not request.session
+        or not request.message
+        or request.contact.doctype != 'Chat Contact'
+        or request.session.doctype != 'Chat Session'
+        or request.message.doctype != 'Chat Message'
+        or not request.contact.name
+        or request.session.name != execution['session']
+        or not request.message.name
+    ):
         raise frappe.PermissionError(_('An authorized operational execution is required.'))
-    token = _scope.set({**(_scope.get() or {}), 'Chat Session': None, 'Chat Turn': None, 'Chat Message': None})
-    try:
-        with _native():
-            session = frappe.db.get_value('Chat Session', execution['session'],
-                ['contact', 'active_flow', 'status', 'dialogue_state'], as_dict=True)
-            message = frappe.db.get_value('Chat Message', request.message.name,
-                ['contact', 'session', 'turn', 'kind'], as_dict=True)
-            if (not session or session.contact != request.contact.name
-                or session.active_flow != execution['source_name'] or session.status != 'Executing'
-                or not json.loads(session.dialogue_state or '{}').get('human_attention')
-                or not message or message.contact != session.contact or message.session != execution['session']
-                or message.turn != execution['turn'] or message.kind != 'Incoming'):
-                raise frappe.PermissionError(_('An authorized operational execution is required.'))
-    finally:
-        _scope.reset(token)
+    session = frappe.db.get_value(
+        'Chat Session',
+        execution['session'],
+        ['contact', 'active_flow', 'status', 'dialogue_state'],
+        as_dict=True,
+    )
+    turn = frappe.db.get_value(
+        'Chat Turn',
+        execution['turn'],
+        ['contact', 'session'],
+        as_dict=True,
+    )
+    message = frappe.db.get_value(
+        'Chat Message',
+        request.message.name,
+        ['contact', 'session', 'turn', 'kind'],
+        as_dict=True,
+    )
+    dialogue_state = json.loads(session.dialogue_state or '{}') if session else {}
+    if (
+        not session
+        or session.contact != request.contact.name
+        or session.active_flow != execution['source_name']
+        or session.status != 'Executing'
+        or not isinstance(dialogue_state, dict)
+        or not dialogue_state.get('human_attention')
+        or not turn
+        or turn.contact != session.contact
+        or turn.session != execution['session']
+        or not message
+        or message.contact != session.contact
+        or message.session != execution['session']
+        or message.turn != execution['turn']
+        or message.kind != 'Incoming'
+    ):
+        raise frappe.PermissionError(_('An authorized operational execution is required.'))
     keys = _human_request_keys(request.contact.name, request.message.name)
     # Suspend only the socket audit for this fixed, already authorized operation.
-    # All document, SQL, callback and transaction guards remain active.
+    # All document, SQL, callback, deadline and transaction guards remain active.
     token = _reading.set(False)
     try:
         return int(frappe.cache.eval(HUMAN_REQUEST_INCREMENT, 2, *keys,
@@ -136,32 +168,9 @@ def _reset_human_request_count(contact, message):
     return frappe.cache.eval(HUMAN_REQUEST_RESET, 2, *_human_request_keys(contact, message))
 
 
-@contextmanager
 def execution_deadline():
-	"""Interrupt synchronous calls on supported workers, preserving an enclosing worker deadline."""
-	if threading.current_thread() is not threading.main_thread():
-		raise RuntimeError("Process execution requires a worker with deadline support")
-	previous_handler = signal.getsignal(signal.SIGALRM)
-	previous_timer = signal.getitimer(signal.ITIMER_REAL)
-	started = time.monotonic()
-
-	def expired(signum, frame):
-		raise TimeoutError("Process execution deadline exceeded")
-
-	signal.signal(signal.SIGALRM, expired)
-	limit = min(PROCESS_TIMEOUT_SECONDS, previous_timer[0]) if previous_timer[0] else PROCESS_TIMEOUT_SECONDS
-	signal.setitimer(signal.ITIMER_REAL, limit)
-	try:
-		yield
-	finally:
-		signal.setitimer(signal.ITIMER_REAL, 0)
-		signal.signal(signal.SIGALRM, previous_handler)
-		if previous_timer[0]:
-			signal.setitimer(
-				signal.ITIMER_REAL,
-				max(0.001, previous_timer[0] - (time.monotonic() - started)),
-				previous_timer[1],
-			)
+	"""Enforce a thread-isolated deadline without mutating process-global SIGALRM state."""
+	return deadline_scope(PROCESS_TIMEOUT_SECONDS)
 
 
 @process_messages()

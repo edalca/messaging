@@ -7,8 +7,9 @@ import hashlib
 import inspect
 import json
 import keyword
+import math
+import os
 import re
-import signal
 import sys
 import threading
 import time
@@ -257,31 +258,445 @@ def validate_process_method_path(method_path: str | None) -> str:
 _testing = ContextVar("messaging_process_test", default=False)
 PROCESS_TIMEOUT_SECONDS = 30
 
+_DEADLINE_EXCEEDED = "Process execution deadline exceeded"
+_DEADLINE_REARM_SECONDS = 0.05
+_DB_TIMEOUT_ERRNOS = frozenset({1969, 3024})
+_DB_LOCK_WAIT_ERRNO = 1205
+
+_active_deadline = ContextVar("messaging_execution_deadline", default=None)
+_in_db_call = ContextVar("messaging_deadline_in_db", default=False)
+_guard_lock = threading.Lock()
+_deadline_lock = threading.Lock()
+_deadline_condition = threading.Condition(_deadline_lock)
+_deadline_entries = {}
+_deadline_expired = set()
+_deadline_monitoring_active = False
+_deadline_tool_id = None
+_deadline_watcher = None
+_deadline_token_seq = 0
+_deadline_internal_codes = set()
+_sleep_guard_installed = False
+_original_sleep = time.sleep
+
+
+def _get_deadline_tool_id():
+	global _deadline_tool_id
+	if _deadline_tool_id is not None:
+		return _deadline_tool_id
+	monitoring = getattr(sys, "monitoring", None)
+	if monitoring is None:
+		return None
+	for candidate in (3, 4):
+		if monitoring.get_tool(candidate) is None:
+			try:
+				monitoring.use_tool_id(candidate, "messaging_execution_deadline")
+			except ValueError:
+				continue
+			monitoring.register_callback(candidate, monitoring.events.INSTRUCTION, _on_deadline_event)
+			_deadline_tool_id = candidate
+			return _deadline_tool_id
+	return None
+
+
+def _set_deadline_monitoring(enabled):
+	global _deadline_monitoring_active
+	if enabled == _deadline_monitoring_active:
+		return
+	tool_id = _get_deadline_tool_id()
+	if tool_id is None:
+		return
+	sys.monitoring.set_events(tool_id, sys.monitoring.events.INSTRUCTION if enabled else 0)
+	_deadline_monitoring_active = enabled
+
+
+def _disarm_current_thread(tid=None):
+	if tid is None:
+		tid = threading.get_ident()
+	with _deadline_lock:
+		_deadline_expired.discard(tid)
+		rearm_at = time.monotonic() + _DEADLINE_REARM_SECONDS
+		for entry in _deadline_entries.values():
+			if entry[2] == tid and entry[3] < rearm_at:
+				entry[3] = rearm_at
+		if not _deadline_expired:
+			_set_deadline_monitoring(False)
+
+
+def _on_deadline_event(code, _offset):
+	tid = threading.get_ident()
+	if tid not in _deadline_expired or code in _deadline_internal_codes or _in_db_call.get():
+		return
+	deadline = _active_deadline.get()
+	if deadline is None or time.monotonic() < deadline:
+		return
+	with _deadline_lock:
+		if tid not in _deadline_expired:
+			return
+		_deadline_expired.discard(tid)
+		rearm_at = time.monotonic() + _DEADLINE_REARM_SECONDS
+		for entry in _deadline_entries.values():
+			if entry[2] == tid and entry[3] < rearm_at:
+				entry[3] = rearm_at
+		if not _deadline_expired:
+			_set_deadline_monitoring(False)
+	raise TimeoutError(_DEADLINE_EXCEEDED)
+
+
+def _deadline_watcher_loop():
+	while True:
+		with _deadline_condition:
+			while not _deadline_entries:
+				_deadline_condition.wait()
+			now = time.monotonic()
+			next_wake = None
+			has_expired = False
+			dead_keys = []
+			for key, entry in _deadline_entries.items():
+				if not entry[4].is_alive():
+					dead_keys.append((key, entry[2]))
+					continue
+				if entry[3] <= now:
+					_deadline_expired.add(entry[2])
+					entry[3] = now + _DEADLINE_REARM_SECONDS
+					has_expired = True
+				if next_wake is None or entry[3] < next_wake:
+					next_wake = entry[3]
+			for key, dead_tid in dead_keys:
+				_deadline_entries.pop(key, None)
+				if not any(e[2] == dead_tid for e in _deadline_entries.values()):
+					_deadline_expired.discard(dead_tid)
+			if not _deadline_expired:
+				_set_deadline_monitoring(False)
+			elif has_expired:
+				_set_deadline_monitoring(True)
+			wait_for = max(0.001, next_wake - time.monotonic()) if next_wake is not None else None
+			_deadline_condition.wait(timeout=wait_for)
+
+
+def _ensure_deadline_watcher():
+	global _deadline_watcher
+	if _deadline_watcher is None or not _deadline_watcher.is_alive():
+		_deadline_watcher = threading.Thread(
+			target=_deadline_watcher_loop,
+			name="messaging-deadline-watcher",
+			daemon=True,
+		)
+		_deadline_watcher.start()
+
+
+def _install_sleep_guard():
+	global _sleep_guard_installed
+	with _guard_lock:
+		if _sleep_guard_installed and getattr(time.sleep, "__messaging_deadline_guard__", False):
+			return
+		original = _original_sleep
+
+		@wraps(original)
+		def _bounded_sleep(seconds):
+			deadline = _active_deadline.get()
+			if deadline is None:
+				return original(seconds)
+			if isinstance(seconds, (int, float)) and seconds < 0:
+				return original(seconds)
+			remaining = deadline - time.monotonic()
+			if remaining <= 0:
+				_disarm_current_thread()
+				raise TimeoutError(_DEADLINE_EXCEEDED)
+			if seconds > remaining:
+				original(remaining)
+				_disarm_current_thread()
+				raise TimeoutError(_DEADLINE_EXCEEDED)
+			result = original(seconds)
+			if time.monotonic() >= deadline:
+				_disarm_current_thread()
+				raise TimeoutError(_DEADLINE_EXCEEDED)
+			return result
+
+		_bounded_sleep.__messaging_deadline_guard__ = True
+		_deadline_internal_codes.add(_bounded_sleep.__code__)
+		time.sleep = _bounded_sleep
+		_sleep_guard_installed = True
+
+
+def _is_db_timeout_error(exc, deadline):
+	current = exc
+	seen = set()
+	while current is not None and id(current) not in seen:
+		seen.add(id(current))
+		args = getattr(current, "args", None)
+		errno = args[0] if args else None
+		if errno in _DB_TIMEOUT_ERRNOS:
+			return True
+		if errno == _DB_LOCK_WAIT_ERRNO and time.monotonic() >= deadline:
+			return True
+		current = current.__cause__ or current.__context__
+	return False
+
+
+def _before_deadline_fork():
+	_deadline_lock.acquire()
+
+
+def _after_deadline_fork_parent():
+	_deadline_lock.release()
+
+
+def _after_deadline_fork_child():
+	global _deadline_lock, _deadline_condition, _deadline_watcher, _deadline_monitoring_active
+	_deadline_lock = threading.Lock()
+	_deadline_condition = threading.Condition(_deadline_lock)
+	_deadline_entries.clear()
+	_deadline_expired.clear()
+	_deadline_watcher = None
+	if _deadline_tool_id is not None and _deadline_monitoring_active:
+		sys.monitoring.set_events(_deadline_tool_id, 0)
+	_deadline_monitoring_active = False
+
+
+if hasattr(os, "register_at_fork"):
+	os.register_at_fork(
+		before=_before_deadline_fork,
+		after_in_parent=_after_deadline_fork_parent,
+		after_in_child=_after_deadline_fork_child,
+	)
+
+
+class _ExecutionDeadline:
+	"""Thread-isolated deadline over Python bytecode, time.sleep, and MariaDB queries.
+
+	Avoids process-global SIGALRM/ITIMER_REAL mutation so main threads (sync, RQ)
+	and secondary threads (Gunicorn gthread) execute concurrently without interfering
+	with each other or with enclosing worker timers.
+	"""
+
+	__slots__ = (
+		"_timeout",
+		"_deadline",
+		"_ctx_token",
+		"_tid",
+		"_entry_token",
+		"_use_trace_fallback",
+		"_previous_trace",
+		"_caller_frame",
+		"_previous_caller_trace",
+		"_db",
+		"_original_sql",
+		"_previous_db_limits",
+		"_configured_stmt_limit",
+	)
+
+	def __init__(self, timeout):
+		self._timeout = float(timeout)
+		self._deadline = None
+		self._ctx_token = None
+		self._tid = None
+		self._entry_token = None
+		self._use_trace_fallback = False
+		self._previous_trace = None
+		self._caller_frame = None
+		self._previous_caller_trace = None
+		self._db = None
+		self._original_sql = None
+		self._previous_db_limits = None
+		self._configured_stmt_limit = None
+
+	def _apply_db_limits(self, remaining):
+		db = self._db
+		if db is None or getattr(db, "_conn", None) is None:
+			return
+		db_token = _in_db_call.set(True)
+		try:
+			if self._previous_db_limits is None:
+				row = self._original_sql(
+					"SELECT @@SESSION.max_statement_time, @@SESSION.innodb_lock_wait_timeout"
+				)[0]
+				self._previous_db_limits = (float(row[0] or 0.0), int(row[1] or 50))
+			prev_stmt, prev_lock = self._previous_db_limits
+			stmt_limit = max(0.001, round(remaining, 3))
+			if prev_stmt > 0:
+				stmt_limit = min(stmt_limit, prev_stmt)
+			lock_limit = max(1, min(prev_lock, math.ceil(remaining)))
+			self._original_sql(
+				"SET SESSION max_statement_time = %s, innodb_lock_wait_timeout = %s",
+				(stmt_limit, lock_limit),
+			)
+			self._configured_stmt_limit = stmt_limit
+		finally:
+			_in_db_call.reset(db_token)
+
+	def _enter_db(self, remaining):
+		db = getattr(frappe.local, "db", None)
+		if db is None or getattr(db, "db_type", None) != "mariadb" or not callable(getattr(db, "sql", None)):
+			return
+		self._db = db
+		self._original_sql = db.sql
+		if getattr(db, "_conn", None) is not None:
+			self._apply_db_limits(remaining)
+
+		def _bounded_sql(*args, **kwargs):
+			left = self._deadline - time.monotonic()
+			if left <= 0:
+				_disarm_current_thread()
+				raise TimeoutError(_DEADLINE_EXCEEDED)
+			if getattr(db, "_conn", None) is not None:
+				if (
+					self._configured_stmt_limit is None
+					or left < self._configured_stmt_limit - 0.1
+					or (self._configured_stmt_limit > 1.0 and left < self._configured_stmt_limit * 0.5)
+				):
+					self._apply_db_limits(left)
+			db_token = _in_db_call.set(True)
+			try:
+				result = self._original_sql(*args, **kwargs)
+			except Exception as exc:
+				if _is_db_timeout_error(exc, self._deadline):
+					_disarm_current_thread()
+					raise TimeoutError(_DEADLINE_EXCEEDED) from exc
+				raise
+			finally:
+				_in_db_call.reset(db_token)
+			if time.monotonic() >= self._deadline:
+				_disarm_current_thread()
+				raise TimeoutError(_DEADLINE_EXCEEDED)
+			return result
+
+		db.sql = _bounded_sql
+
+	def _exit_db(self):
+		db = self._db
+		if db is None:
+			return
+		if self._original_sql is not None:
+			db.sql = self._original_sql
+		if self._previous_db_limits is not None and getattr(db, "_conn", None) is not None:
+			db_token = _in_db_call.set(True)
+			try:
+				self._original_sql(
+					"SET SESSION max_statement_time = %s, innodb_lock_wait_timeout = %s",
+					self._previous_db_limits,
+				)
+			except Exception:
+				pass
+			finally:
+				_in_db_call.reset(db_token)
+		self._db = None
+		self._original_sql = None
+		self._previous_db_limits = None
+		self._configured_stmt_limit = None
+
+	def __enter__(self):
+		global _deadline_token_seq
+		_install_sleep_guard()
+		now = time.monotonic()
+		if self._timeout <= 0:
+			raise TimeoutError(_DEADLINE_EXCEEDED)
+		outer = _active_deadline.get()
+		deadline = min(outer, now + self._timeout) if outer is not None else (now + self._timeout)
+		remaining = deadline - now
+		if remaining <= 0:
+			raise TimeoutError(_DEADLINE_EXCEEDED)
+		self._deadline = deadline
+		self._tid = threading.get_ident()
+		self._enter_db(remaining)
+		try:
+			with _deadline_condition:
+				tool_id = _get_deadline_tool_id()
+				if tool_id is not None:
+					_ensure_deadline_watcher()
+					_deadline_token_seq += 1
+					self._entry_token = _deadline_token_seq
+					_deadline_entries[(self._tid, self._entry_token)] = [
+						deadline,
+						self._entry_token,
+						self._tid,
+						deadline,
+						threading.current_thread(),
+					]
+					_deadline_condition.notify()
+				else:
+					self._use_trace_fallback = True
+			if self._use_trace_fallback:
+				self._previous_trace = sys.gettrace()
+				fired = False
+
+				def _trace(frame, event, arg):
+					nonlocal fired
+					if not fired and frame.f_code not in _deadline_internal_codes and not _in_db_call.get() and time.monotonic() >= deadline:
+						fired = True
+						raise TimeoutError(_DEADLINE_EXCEEDED)
+					if self._previous_trace is not None:
+						self._previous_trace(frame, event, arg)
+					return _trace
+
+				caller = sys._getframe(1)
+				self._caller_frame = caller
+				self._previous_caller_trace = caller.f_trace
+				caller.f_trace = _trace
+				sys.settrace(_trace)
+			self._ctx_token = _active_deadline.set(deadline)
+		except Exception:
+			self.__exit__(None, None, None)
+			raise
+		return self
+
+	def __exit__(self, exc_type, exc, tb):
+		if self._ctx_token is not None:
+			_active_deadline.reset(self._ctx_token)
+			self._ctx_token = None
+		if self._use_trace_fallback:
+			sys.settrace(self._previous_trace)
+			if self._caller_frame is not None:
+				self._caller_frame.f_trace = self._previous_caller_trace
+				self._caller_frame = None
+		elif self._entry_token is not None:
+			with _deadline_condition:
+				_deadline_entries.pop((self._tid, self._entry_token), None)
+				now = time.monotonic()
+				still_expired = False
+				for entry in _deadline_entries.values():
+					if entry[2] == self._tid and entry[0] <= now:
+						still_expired = True
+						break
+				if not still_expired:
+					_deadline_expired.discard(self._tid)
+					if not _deadline_expired:
+						_set_deadline_monitoring(False)
+			self._entry_token = None
+		self._exit_db()
+		return False
+
+
+_deadline_internal_codes.update(
+	{
+		_ExecutionDeadline.__enter__.__code__,
+		_ExecutionDeadline.__exit__.__code__,
+		_ExecutionDeadline._apply_db_limits.__code__,
+		_ExecutionDeadline._enter_db.__code__,
+		_ExecutionDeadline._exit_db.__code__,
+		_disarm_current_thread.__code__,
+		_on_deadline_event.__code__,
+		_set_deadline_monitoring.__code__,
+		_get_deadline_tool_id.__code__,
+		_ensure_deadline_watcher.__code__,
+		_install_sleep_guard.__code__,
+		_is_db_timeout_error.__code__,
+	}
+)
+_install_sleep_guard()
+
+
+def deadline_scope(timeout=None):
+	"""Return a thread-isolated deadline context manager for Process operations."""
+	return _ExecutionDeadline(PROCESS_TIMEOUT_SECONDS if timeout is None else timeout)
+
 
 def is_process_test():
 	return _testing.get()
 
 
-@contextmanager
 def _discovery_deadline():
-	"""Interrupt synchronous discovery calls on main-thread workers."""
-	if threading.current_thread() is not threading.main_thread():
-		raise RuntimeError("Process execution requires a worker with deadline support")
-	previous_handler = signal.getsignal(signal.SIGALRM)
-	previous_timer = signal.getitimer(signal.ITIMER_REAL)
-	started = time.monotonic()
-	def expired(signum, frame):
-		raise TimeoutError("Process execution deadline exceeded")
-	signal.signal(signal.SIGALRM, expired)
-	limit = min(PROCESS_TIMEOUT_SECONDS, previous_timer[0]) if previous_timer[0] else PROCESS_TIMEOUT_SECONDS
-	signal.setitimer(signal.ITIMER_REAL, limit)
-	try:
-		yield
-	finally:
-		signal.setitimer(signal.ITIMER_REAL, 0)
-		signal.signal(signal.SIGALRM, previous_handler)
-		if previous_timer[0]:
-			signal.setitimer(signal.ITIMER_REAL, max(0.001, previous_timer[0]-(time.monotonic()-started)), previous_timer[1])
+	"""Bound synchronous discovery calls on any worker thread."""
+	return deadline_scope(PROCESS_TIMEOUT_SECONDS)
 
 
 @contextmanager
@@ -312,19 +727,20 @@ _discovering = ContextVar('messaging_process_discovering', default=False)
 @contextmanager
 def discovery_reads():
     """Protect declaration discovery from document data, including cached reads."""
-    for name in ('get_doc', 'get_cached_doc', 'get_single', 'get_all', 'get_list', 'has_permission'):
-        original = getattr(frappe, name)
-        if getattr(original, '__messaging_discovery_guard__', None) is True:
-            continue
+    with _guard_lock:
+        for name in ('get_doc', 'get_cached_doc', 'get_single', 'get_all', 'get_list', 'has_permission'):
+            original = getattr(frappe, name)
+            if getattr(original, '__messaging_discovery_guard__', None) is True:
+                continue
 
-        @wraps(original)
-        def guarded(*args, __original=original, **kwargs):
-            if _discovering.get():
-                _denied()
-            return __original(*args, **kwargs)
+            @wraps(original)
+            def guarded(*args, __original=original, **kwargs):
+                if _discovering.get():
+                    _denied()
+                return __original(*args, **kwargs)
 
-        guarded.__messaging_discovery_guard__ = True
-        setattr(frappe, name, guarded)
+            guarded.__messaging_discovery_guard__ = True
+            setattr(frappe, name, guarded)
 
     token = _discovering.set(True)
     try:
@@ -386,40 +802,42 @@ def _require_write_execution():
         scope['source_type'] != 'Bot Flow'
         or any(not scope.get(key) for key in ('source_name', 'session', 'turn', 'execution_id'))):
         raise frappe.PermissionError(_('An authorized operational execution is required.'))
+    return scope
 
 
 def _install_document_guards():
     global _document_guards_installed
-    if _document_guards_installed:
-        return
-    physical_operations = {'db_insert': 'create', 'db_update': 'update', 'delete': 'delete'}
-    for name in ('insert', 'db_insert', 'save', 'db_update', 'submit', 'cancel', 'delete'):
-        original = getattr(Document, name)
+    with _guard_lock:
+        if _document_guards_installed:
+            return
+        physical_operations = {'db_insert': 'create', 'db_update': 'update', 'delete': 'delete'}
+        for name in ('insert', 'db_insert', 'save', 'db_update', 'submit', 'cancel', 'delete'):
+            original = getattr(Document, name)
 
-        @wraps(original)
-        def guarded(doc, *args, __original=original, __physical=physical_operations.get(name), **kwargs):
-            if _effect.get() is None:
-                return __original(doc, *args, **kwargs)
-            _require_write_execution()
-            # Only native persistence opens a SQL write scope. Frappe owns
-            # the permission behavior of the selected document operation.
-            token = _native_write.set((doc.doctype, __physical)) if __physical else None
-            action = _document_operation.set(doc)
-            had_notify = 'notify_update' in doc.flags
-            previous_notify = doc.flags.get('notify_update')
-            doc.flags.notify_update = False
-            try:
-                return __original(doc, *args, **kwargs)
-            finally:
-                if had_notify:
-                    doc.flags.notify_update = previous_notify
-                else:
-                    doc.flags.pop('notify_update', None)
-                _document_operation.reset(action)
-                if token is not None:
-                    _native_write.reset(token)
-        setattr(Document, name, guarded)
-    _document_guards_installed = True
+            @wraps(original)
+            def guarded(doc, *args, __original=original, __physical=physical_operations.get(name), **kwargs):
+                if _effect.get() is None:
+                    return __original(doc, *args, **kwargs)
+                _require_write_execution()
+                # Only native persistence opens a SQL write scope. Frappe owns
+                # the permission behavior of the selected document operation.
+                token = _native_write.set((doc.doctype, __physical)) if __physical else None
+                action = _document_operation.set(doc)
+                had_notify = 'notify_update' in doc.flags
+                previous_notify = doc.flags.get('notify_update')
+                doc.flags.notify_update = False
+                try:
+                    return __original(doc, *args, **kwargs)
+                finally:
+                    if had_notify:
+                        doc.flags.notify_update = previous_notify
+                    else:
+                        doc.flags.pop('notify_update', None)
+                    _document_operation.reset(action)
+                    if token is not None:
+                        _native_write.reset(token)
+            setattr(Document, name, guarded)
+        _document_guards_installed = True
 
 
 @contextmanager
@@ -531,23 +949,25 @@ def _audit(event, args):
 
 def _install_guard():
     global _guard_installed
-    if not _guard_installed:
+    with _guard_lock:
+        if _guard_installed:
+            return
         sys.addaudithook(_audit)
-    from requests.sessions import Session
-    targets = [(frappe, name) for name in ('enqueue', 'sendmail', 'publish_realtime', 'set_user')]
-    targets.append((Session, 'request'))
-    for owner, name in targets:
-        original = getattr(owner, name)
-        if getattr(original, '__messaging_effect_guard__', None) is True:
-            continue
-        @wraps(original)
-        def protected(*args, __original=original, **kwargs):
-            if _reading.get():
-                _denied()
-            return __original(*args, **kwargs)
-        protected.__messaging_effect_guard__ = True
-        setattr(owner, name, protected)
-    _guard_installed = True
+        from requests.sessions import Session
+        targets = [(frappe, name) for name in ('enqueue', 'sendmail', 'publish_realtime', 'set_user')]
+        targets.append((Session, 'request'))
+        for owner, name in targets:
+            original = getattr(owner, name)
+            if getattr(original, '__messaging_effect_guard__', None) is True:
+                continue
+            @wraps(original)
+            def protected(*args, __original=original, **kwargs):
+                if _reading.get():
+                    _denied()
+                return __original(*args, **kwargs)
+            protected.__messaging_effect_guard__ = True
+            setattr(owner, name, protected)
+        _guard_installed = True
 
 
 @contextmanager

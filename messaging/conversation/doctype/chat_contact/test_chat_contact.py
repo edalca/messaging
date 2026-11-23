@@ -182,8 +182,37 @@ class TestChatContact(FrappeTestCase):
 		from messaging.chatbot.doctype.bot_flow.execution import require_execution_result
 		registered = self.registered_contact()
 		receipt = json.loads(registered.registration_receipt)
-		flow = frappe._dict(name=receipt['flow'], process_definition=None)
 		result = dict(functional=True, execution_log=receipt['execution_log'], status=receipt['status'])
-		with patch('messaging.chatbot.doctype.bot_flow.execution.fingerprint', return_value='changed-configuration'):
+		# An unapproved or stale Flow cannot authorize consumer side effects even with a matching receipt.
+		unapproved = frappe._dict(
+			name=receipt['flow'],
+			status='Unavailable',
+			process_definition=None,
+			approval_hash='historical-configuration',
+		)
+		with self.assertRaises(frappe.ValidationError):
+			require_execution_result(
+				unapproved, result, session=receipt['session'], turn=receipt['turn'], execution_id=receipt['execution_id']
+			)
+		# Even when the Flow is currently approved, its current approval_hash must match the receipt's fingerprint.
+		changed = frappe._dict(
+			name=receipt['flow'],
+			status='Enabled',
+			process_definition=None,
+			approval_hash='changed-configuration',
+		)
+		with patch('messaging.chatbot.doctype.bot_flow.execution.require_approved'):
 			with self.assertRaises(frappe.ValidationError):
-				require_execution_result(flow, result, session=receipt['session'], turn=receipt['turn'], execution_id=receipt['execution_id'])
+				require_execution_result(
+					changed, result, session=receipt['session'], turn=receipt['turn'], execution_id=receipt['execution_id']
+				)
+			matching = frappe._dict(
+				name=receipt['flow'],
+				status='Enabled',
+				process_definition=None,
+				approval_hash='historical-configuration',
+			)
+			log = require_execution_result(
+				matching, result, session=receipt['session'], turn=receipt['turn'], execution_id=receipt['execution_id']
+			)
+			self.assertEqual(log.configuration_fingerprint, 'historical-configuration')
